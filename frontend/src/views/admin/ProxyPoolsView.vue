@@ -131,10 +131,58 @@
           </div>
         </div>
 
-        <div v-if="detailProxies.length" class="overflow-x-auto">
+        <div v-if="detailProxies.length" class="flex flex-wrap items-center gap-2">
+          <div class="relative min-w-0 flex-1 sm:max-w-xs">
+            <Icon name="search" size="sm" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              v-model.trim="memberSearch"
+              class="input pl-9"
+              :placeholder="t('admin.proxyPools.searchMembers')"
+              data-test="member-search"
+            />
+          </div>
+          <div class="w-full sm:w-44">
+            <Select
+              v-model="memberStatusFilter"
+              :options="memberFilterOptions"
+              data-test="member-status-filter"
+            />
+          </div>
+          <button
+            class="btn btn-secondary btn-sm"
+            :disabled="invalidMemberProxies.length === 0 || batchRemoving"
+            data-test="select-invalid-members"
+            @click="selectInvalidMembers"
+          >
+            <Icon name="filter" size="sm" />
+            {{ t('admin.proxyPools.selectInvalid', { count: invalidMemberProxies.length }) }}
+          </button>
+          <button
+            class="btn btn-danger btn-sm"
+            :disabled="selectedMemberCount === 0 || batchRemoving"
+            data-test="remove-selected-members"
+            @click="showBatchRemoveDialog = true"
+          >
+            <Icon name="x" size="sm" />
+            {{ t('admin.proxyPools.removeSelected', { count: selectedMemberCount }) }}
+          </button>
+        </div>
+
+        <div v-if="filteredDetailProxies.length" class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="border-b border-gray-200 text-left text-xs uppercase text-gray-500 dark:border-dark-600 dark:text-gray-400">
               <tr>
+                <th class="w-10 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    :checked="allVisibleMembersSelected"
+                    :indeterminate="someVisibleMembersSelected"
+                    :aria-label="t('common.selectAll')"
+                    data-test="select-all-members"
+                    @change="toggleAllVisibleMembers(($event.target as HTMLInputElement).checked)"
+                  />
+                </th>
                 <th class="px-3 py-2">{{ t('admin.proxyPools.proxy') }}</th>
                 <th class="px-3 py-2">{{ t('admin.proxyPools.health') }}</th>
                 <th class="px-3 py-2">{{ t('admin.proxyPools.grokQuality') }}</th>
@@ -146,7 +194,22 @@
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-dark-600">
-              <tr v-for="proxy in detailProxies" :key="proxy.id">
+              <tr
+                v-for="proxy in filteredDetailProxies"
+                :key="proxy.id"
+                :class="selectedMemberProxyIds.has(proxy.id) ? 'bg-primary-50/60 dark:bg-primary-900/10' : ''"
+                data-test="pool-member-row"
+              >
+                <td class="px-3 py-3">
+                  <input
+                    type="checkbox"
+                    class="h-4 w-4 cursor-pointer rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    :checked="selectedMemberProxyIds.has(proxy.id)"
+                    :aria-label="t('admin.proxyPools.selectProxy', { name: proxy.name })"
+                    :data-test="`select-member-${proxy.id}`"
+                    @change="toggleMember(proxy.id)"
+                  />
+                </td>
                 <td class="px-3 py-3"><div class="font-medium text-gray-900 dark:text-white">{{ proxy.name }}</div><code class="text-xs text-gray-500">{{ proxy.host }}:{{ proxy.port }}</code></td>
                 <td class="px-3 py-3"><span :class="healthClass(proxy.pool_health)">{{ healthLabel(proxy.pool_health) }}</span><div v-if="proxy.pool_failures" class="mt-1 text-xs text-red-500">{{ t('admin.proxyPools.failures', { count: proxy.pool_failures }) }}</div></td>
                 <td class="px-3 py-3" :title="proxy.grok_quality_message || undefined">
@@ -162,6 +225,7 @@
             </tbody>
           </table>
         </div>
+        <div v-else-if="detailProxies.length" class="border-y border-dashed border-gray-300 py-10 text-center text-sm text-gray-500 dark:border-dark-600">{{ t('admin.proxyPools.noMatchingMembers') }}</div>
         <div v-else class="border-y border-dashed border-gray-300 py-10 text-center text-sm text-gray-500 dark:border-dark-600">{{ t('admin.proxyPools.noMembers') }}</div>
 
         <div>
@@ -195,7 +259,7 @@
             <span>{{ t('common.selectAll') }}</span>
           </label>
           <label v-for="proxy in assignableProxies" :key="proxy.id" class="flex cursor-pointer items-center gap-3 px-2 py-2 hover:bg-gray-50 dark:hover:bg-dark-700">
-            <input type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" :checked="selectedProxyIds.has(proxy.id)" @change="toggleProxy(proxy.id)" />
+            <input type="checkbox" class="h-4 w-4 rounded border-gray-300 text-primary-600" :checked="selectedProxyIds.has(proxy.id)" :data-test="`assign-proxy-${proxy.id}`" @change="toggleProxy(proxy.id)" />
             <span class="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-white">{{ proxy.name }}</span>
             <code class="text-xs text-gray-500">{{ proxy.host }}:{{ proxy.port }}</code>
           </label>
@@ -208,6 +272,14 @@
     </BaseDialog>
 
     <ConfirmDialog :show="!!deletingPool" :title="t('admin.proxyPools.delete')" :message="t('admin.proxyPools.deleteConfirm', { name: deletingPool?.name })" :danger="true" @confirm="deletePool" @cancel="deletingPool = null" />
+    <ConfirmDialog
+      :show="showBatchRemoveDialog"
+      :title="t('admin.proxyPools.removeSelectedTitle')"
+      :message="t('admin.proxyPools.removeSelectedConfirm', { count: selectedMemberCount })"
+      :danger="true"
+      @confirm="confirmBatchRemove"
+      @cancel="showBatchRemoveDialog = false"
+    />
   </AppLayout>
 </template>
 
@@ -224,6 +296,7 @@ import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import { formatDateTime } from '@/utils/format'
+import { getProxyPoolMemberState, type ProxyHealthFilter } from '@/utils/proxyHealth'
 import type { Column } from '@/components/common/types'
 import type { Proxy, ProxyPoolWithStats, ProxyPoolProxy, ProxyPoolRebindLog } from '@/types'
 
@@ -244,6 +317,11 @@ const assigning = ref(false)
 const allProxies = ref<Proxy[]>([])
 const selectedProxyIds = ref(new Set<number>())
 const proxySearch = ref('')
+const memberSearch = ref('')
+const memberStatusFilter = ref<ProxyHealthFilter>('all')
+const selectedMemberProxyIds = ref(new Set<number>())
+const showBatchRemoveDialog = ref(false)
+const batchRemoving = ref(false)
 
 const columns: Column[] = [
   { key: 'name', label: t('admin.proxyPools.name') },
@@ -259,6 +337,12 @@ const statusOptions = computed(() => [
   { value: 'active', label: t('admin.proxyPools.active') },
   { value: 'disabled', label: t('admin.proxyPools.disabled') }
 ])
+const memberFilterOptions = computed(() => [
+  { value: 'all', label: t('admin.proxyPools.filterAll') },
+  { value: 'healthy', label: t('admin.proxyPools.filterHealthy') },
+  { value: 'invalid', label: t('admin.proxyPools.filterInvalid') },
+  { value: 'pending', label: t('admin.proxyPools.filterPending') }
+])
 const form = reactive({ name: '', description: '', status: 'active', health_interval_seconds: 300, failure_threshold: 2, auto_rebind: true })
 const healthyCount = computed(() => detailProxies.value.filter((proxy) => proxy.pool_health === 'healthy').length)
 const unhealthyCount = computed(() => detailProxies.value.filter((proxy) => proxy.pool_health === 'unhealthy').length)
@@ -271,6 +355,22 @@ const assignableProxies = computed(() => {
 const visibleSelectedProxyCount = computed(() => assignableProxies.value.filter((proxy) => selectedProxyIds.value.has(proxy.id)).length)
 const allVisibleProxiesSelected = computed(() => assignableProxies.value.length > 0 && visibleSelectedProxyCount.value === assignableProxies.value.length)
 const someVisibleProxiesSelected = computed(() => visibleSelectedProxyCount.value > 0 && !allVisibleProxiesSelected.value)
+const invalidMemberProxies = computed(() => detailProxies.value.filter((proxy) => getProxyPoolMemberState(proxy) === 'invalid'))
+const filteredDetailProxies = computed(() => {
+  const query = memberSearch.value.toLowerCase()
+  return detailProxies.value.filter((proxy) => {
+    const matchesStatus = memberStatusFilter.value === 'all' || getProxyPoolMemberState(proxy) === memberStatusFilter.value
+    if (!matchesStatus) return false
+    if (!query) return true
+    return [proxy.name, proxy.host, proxy.ip_address, proxy.country, proxy.country_code]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(query))
+  })
+})
+const selectedMemberCount = computed(() => selectedMemberProxyIds.value.size)
+const visibleSelectedMemberCount = computed(() => filteredDetailProxies.value.filter((proxy) => selectedMemberProxyIds.value.has(proxy.id)).length)
+const allVisibleMembersSelected = computed(() => filteredDetailProxies.value.length > 0 && visibleSelectedMemberCount.value === filteredDetailProxies.value.length)
+const someVisibleMembersSelected = computed(() => visibleSelectedMemberCount.value > 0 && !allVisibleMembersSelected.value)
 
 async function loadPools() { loading.value = true; try { pools.value = await adminAPI.proxyPools.list() } catch { appStore.showError(t('admin.proxyPools.loadFailed')) } finally { loading.value = false } }
 function resetForm() { Object.assign(form, { name: '', description: '', status: 'active', health_interval_seconds: 300, failure_threshold: 2, auto_rebind: true }) }
@@ -279,6 +379,10 @@ function openEdit(pool: ProxyPoolWithStats) { editingPool.value = pool; Object.a
 async function savePool() { saving.value = true; try { const payload = { ...form, status: form.status as 'active' | 'disabled' }; if (editingPool.value) await adminAPI.proxyPools.update(editingPool.value.id, payload); else await adminAPI.proxyPools.create(payload); showForm.value = false; appStore.showSuccess(t('admin.proxyPools.saved')); await loadPools() } catch { appStore.showError(t('admin.proxyPools.saveFailed')) } finally { saving.value = false } }
 async function deletePool() { if (!deletingPool.value) return; try { await adminAPI.proxyPools.remove(deletingPool.value.id); deletingPool.value = null; appStore.showSuccess(t('admin.proxyPools.deleted')); await loadPools() } catch { appStore.showError(t('admin.proxyPools.deleteFailed')) } }
 async function openDetail(pool: ProxyPoolWithStats) {
+  memberSearch.value = ''
+  memberStatusFilter.value = 'all'
+  selectedMemberProxyIds.value = new Set()
+  showBatchRemoveDialog.value = false
   detailPool.value = pool
   try {
     await refreshDetail()
@@ -286,8 +390,15 @@ async function openDetail(pool: ProxyPoolWithStats) {
     appStore.showError(t('admin.proxyPools.loadFailed'))
   }
 }
-function closeDetail() { detailPool.value = null; detailProxies.value = []; logs.value = [] }
-async function refreshDetail() { if (!detailPool.value) return; [detailProxies.value, logs.value] = await Promise.all([adminAPI.proxyPools.listProxies(detailPool.value.id), adminAPI.proxyPools.rebindLogs(detailPool.value.id)]) }
+function closeDetail() { detailPool.value = null; detailProxies.value = []; logs.value = []; memberSearch.value = ''; memberStatusFilter.value = 'all'; selectedMemberProxyIds.value = new Set(); showBatchRemoveDialog.value = false }
+async function refreshDetail() {
+  if (!detailPool.value) return
+  const [proxies, rebindEntries] = await Promise.all([adminAPI.proxyPools.listProxies(detailPool.value.id), adminAPI.proxyPools.rebindLogs(detailPool.value.id)])
+  detailProxies.value = proxies
+  logs.value = rebindEntries
+  const memberIds = new Set(proxies.map((proxy) => proxy.id))
+  selectedMemberProxyIds.value = new Set([...selectedMemberProxyIds.value].filter((id) => memberIds.has(id)))
+}
 async function runRebind() {
   if (!detailPool.value) return
   rebinding.value = true
@@ -319,8 +430,35 @@ function toggleAllVisibleProxies(checked: boolean) {
   }
   selectedProxyIds.value = next
 }
+function toggleMember(id: number) { const next = new Set(selectedMemberProxyIds.value); next.has(id) ? next.delete(id) : next.add(id); selectedMemberProxyIds.value = next }
+function toggleAllVisibleMembers(checked: boolean) {
+  const next = new Set(selectedMemberProxyIds.value)
+  for (const proxy of filteredDetailProxies.value) {
+    checked ? next.add(proxy.id) : next.delete(proxy.id)
+  }
+  selectedMemberProxyIds.value = next
+}
+function selectInvalidMembers() {
+  selectedMemberProxyIds.value = new Set(invalidMemberProxies.value.map((proxy) => proxy.id))
+  memberStatusFilter.value = 'invalid'
+}
 async function assignProxies() { if (!detailPool.value) return; assigning.value = true; try { await adminAPI.proxyPools.assignProxies(detailPool.value.id, [...selectedProxyIds.value]); showAssign.value = false; await Promise.all([refreshDetail(), loadPools()]) } catch { appStore.showError(t('admin.proxyPools.assignFailed')) } finally { assigning.value = false } }
 async function removeProxy(id: number) { if (!detailPool.value) return; try { await adminAPI.proxyPools.removeProxies(detailPool.value.id, [id]); await Promise.all([refreshDetail(), loadPools()]) } catch { appStore.showError(t('admin.proxyPools.removeFailed')) } }
+async function confirmBatchRemove() {
+  if (!detailPool.value || selectedMemberProxyIds.value.size === 0 || batchRemoving.value) return
+  batchRemoving.value = true
+  try {
+    const removed = await adminAPI.proxyPools.removeProxies(detailPool.value.id, [...selectedMemberProxyIds.value])
+    selectedMemberProxyIds.value = new Set()
+    showBatchRemoveDialog.value = false
+    appStore.showSuccess(t('admin.proxyPools.removeSelectedDone', { count: removed }))
+    await Promise.all([refreshDetail(), loadPools()])
+  } catch {
+    appStore.showError(t('admin.proxyPools.removeFailed'))
+  } finally {
+    batchRemoving.value = false
+  }
+}
 function healthClass(health: string) { return ['badge', health === 'healthy' ? 'badge-success' : health === 'unhealthy' ? 'badge-danger' : 'badge-gray'] }
 function healthLabel(health: string) { return health === 'healthy' ? t('admin.proxyPools.healthy') : health === 'unhealthy' ? t('admin.proxyPools.unhealthy') : t('admin.proxyPools.unknown') }
 function grokQualityClass(status: string) { return ['badge', status === 'pass' ? 'badge-success' : status === 'warn' ? 'badge-warning' : status === 'fail' || status === 'challenge' ? 'badge-danger' : 'badge-gray'] }

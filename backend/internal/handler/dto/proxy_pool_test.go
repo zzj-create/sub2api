@@ -24,3 +24,19 @@ func TestProxyPoolProxyFromServiceUsesAPIFieldsAndHidesPassword(t *testing.T) {
 	require.NotContains(t, string(payload), "secret")
 	require.NotContains(t, string(payload), "Password")
 }
+
+func TestProxyWithAccountCountFromServiceAdminIncludesGrokQuality(t *testing.T) {
+	httpStatus := 401
+	mapped := ProxyWithAccountCountFromServiceAdmin(&service.ProxyWithAccountCount{
+		Proxy:                 service.Proxy{ID: 8, Name: "global proxy", Password: "secret"},
+		GrokQualityStatus:     "pass",
+		GrokQualityHTTPStatus: &httpStatus,
+		GrokQualityMessage:    "target reachable",
+	})
+
+	payload, err := json.Marshal(mapped)
+	require.NoError(t, err)
+	require.Contains(t, string(payload), `"grok_quality_status":"pass"`)
+	require.Contains(t, string(payload), `"grok_quality_http_status":401`)
+	require.Contains(t, string(payload), `"grok_quality_message":"target reachable"`)
+}

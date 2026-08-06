@@ -9,6 +9,7 @@ const {
   listProxies,
   getAllProxies,
   assignProxies,
+  removeProxies,
   rebindLogs,
   rebind,
   showError,
@@ -18,6 +19,7 @@ const {
   listProxies: vi.fn(),
   getAllProxies: vi.fn(),
   assignProxies: vi.fn(),
+  removeProxies: vi.fn(),
   rebindLogs: vi.fn(),
   rebind: vi.fn(),
   showError: vi.fn(),
@@ -35,7 +37,7 @@ vi.mock('@/api/admin', () => ({
       update: vi.fn(),
       remove: vi.fn(),
       assignProxies,
-      removeProxies: vi.fn()
+      removeProxies
     },
     proxies: {
       getAll: getAllProxies
@@ -69,6 +71,35 @@ const DataTableStub = defineComponent({
   }
 })
 
+const SelectStub = defineComponent({
+  props: {
+    modelValue: { type: [String, Number], default: '' },
+    options: { type: Array, default: () => [] }
+  },
+  emits: ['update:modelValue'],
+  template: `
+    <select :value="modelValue" @change="$emit('update:modelValue', $event.target.value)">
+      <option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option>
+    </select>
+  `
+})
+
+const ConfirmDialogStub = defineComponent({
+  props: {
+    show: { type: Boolean, default: false },
+    title: { type: String, default: '' },
+    message: { type: String, default: '' }
+  },
+  emits: ['confirm', 'cancel'],
+  template: `
+    <section v-if="show" data-test="confirm-dialog">
+      <span>{{ title }}</span><span>{{ message }}</span>
+      <button data-test="confirm-remove" @click="$emit('confirm')">confirm</button>
+      <button data-test="cancel-remove" @click="$emit('cancel')">cancel</button>
+    </section>
+  `
+})
+
 function makePool() {
   return {
     id: 1,
@@ -98,8 +129,8 @@ function mountView() {
           props: ['show', 'title'],
           template: '<section v-if="show" class="dialog-stub"><slot /><slot name="footer" /></section>'
         },
-        ConfirmDialog: true,
-        Select: true,
+        ConfirmDialog: ConfirmDialogStub,
+        Select: SelectStub,
         Icon: true
       }
     }
@@ -141,6 +172,7 @@ describe('ProxyPoolsView', () => {
       { id: 13, name: 'exit-c', host: 'proxy-c.example', port: 8082 }
     ])
     assignProxies.mockResolvedValue({ assigned: 2 })
+    removeProxies.mockResolvedValue(2)
   })
 
   it('loads proxy pools on mount', async () => {
@@ -212,7 +244,7 @@ describe('ProxyPoolsView', () => {
     const selectAll = wrapper.get<HTMLInputElement>('input[data-test="select-all-proxies"]')
     await selectAll.setValue(true)
 
-    const proxyCheckboxes = wrapper.findAll<HTMLInputElement>('input[type="checkbox"]').filter((input) => input.attributes('data-test') !== 'select-all-proxies')
+    const proxyCheckboxes = wrapper.findAll<HTMLInputElement>('input[data-test^="assign-proxy-"]')
     expect(proxyCheckboxes).toHaveLength(2)
     expect(proxyCheckboxes.every((input) => input.element.checked)).toBe(true)
 
@@ -223,4 +255,85 @@ describe('ProxyPoolsView', () => {
 
     expect(assignProxies).toHaveBeenCalledWith(1, [12, 13])
   })
+
+  it('filters invalid members using connectivity and Grok quality together', async () => {
+    listProxies.mockResolvedValue([
+      { ...makeProxy(11, 'healthy-pass'), pool_health: 'healthy', grok_quality_status: 'pass' },
+      { ...makeProxy(12, 'connection-failed'), pool_health: 'unhealthy', grok_quality_status: 'pass' },
+      { ...makeProxy(13, 'grok-blocked'), pool_health: 'healthy', grok_quality_status: 'challenge' },
+      { ...makeProxy(14, 'not-checked'), pool_health: 'unknown', grok_quality_status: 'unknown' }
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('button[title="admin.proxyPools.details"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="member-status-filter"]').setValue('invalid')
+
+    const rows = wrapper.findAll('[data-test="pool-member-row"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].text()).toContain('connection-failed')
+    expect(rows[1].text()).toContain('grok-blocked')
+    expect(wrapper.text()).not.toContain('healthy-pass')
+    expect(wrapper.text()).not.toContain('not-checked')
+  })
+
+  it('combines member search with the invalid filter', async () => {
+    listProxies.mockResolvedValue([
+      { ...makeProxy(12, 'connection-failed'), host: 'dead.example', pool_health: 'unhealthy', grok_quality_status: 'pass' },
+      { ...makeProxy(13, 'grok-blocked'), host: 'blocked.example', pool_health: 'healthy', grok_quality_status: 'challenge' }
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('button[title="admin.proxyPools.details"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="member-status-filter"]').setValue('invalid')
+    await wrapper.get('[data-test="member-search"]').setValue('blocked')
+
+    const rows = wrapper.findAll('[data-test="pool-member-row"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].text()).toContain('grok-blocked')
+  })
+
+  it('selects every invalid member and removes them in one request', async () => {
+    listProxies.mockResolvedValue([
+      { ...makeProxy(11, 'healthy-pass'), pool_health: 'healthy', grok_quality_status: 'pass' },
+      { ...makeProxy(12, 'connection-failed'), pool_health: 'unhealthy', grok_quality_status: 'pass' },
+      { ...makeProxy(13, 'grok-blocked'), pool_health: 'healthy', grok_quality_status: 'challenge' },
+      { ...makeProxy(14, 'not-checked'), pool_health: 'unknown', grok_quality_status: 'unknown' }
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('button[title="admin.proxyPools.details"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="select-invalid-members"]').trigger('click')
+    expect(wrapper.findAll('[data-test="pool-member-row"]')).toHaveLength(2)
+    expect(wrapper.get<HTMLInputElement>('[data-test="select-member-12"]').element.checked).toBe(true)
+    expect(wrapper.get<HTMLInputElement>('[data-test="select-member-13"]').element.checked).toBe(true)
+
+    await wrapper.get('[data-test="remove-selected-members"]').trigger('click')
+    await wrapper.get('[data-test="confirm-remove"]').trigger('click')
+    await flushPromises()
+
+    expect(removeProxies).toHaveBeenCalledWith(1, [12, 13])
+    expect(showSuccess).toHaveBeenCalledWith('admin.proxyPools.removeSelectedDone')
+  })
 })
+
+function makeProxy(id: number, name: string) {
+  return {
+    id,
+    name,
+    protocol: 'http',
+    host: `${name}.example`,
+    port: 8080 + id,
+    status: 'active',
+    pool_id: 1,
+    pool_health: 'unknown',
+    pool_failures: 0,
+    grok_quality_status: 'unknown',
+    account_count: 0
+  }
+}

@@ -7,9 +7,33 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestAttachProxyLatencyIncludesCachedGrokQuality(t *testing.T) {
+	checkedAt := time.Date(2026, time.August, 7, 12, 0, 0, 0, time.UTC)
+	httpStatus := http.StatusUnauthorized
+	cache := &proxyPoolServiceTestLatencyCache{values: map[int64]*ProxyLatencyInfo{
+		7: {
+			Success:               true,
+			GrokQualityStatus:     "pass",
+			GrokQualityCheckedAt:  &checkedAt,
+			GrokQualityHTTPStatus: &httpStatus,
+			GrokQualityMessage:    "target reachable",
+		},
+	}}
+	service := &adminServiceImpl{proxyLatencyCache: cache}
+	proxies := []ProxyWithAccountCount{{Proxy: Proxy{ID: 7}}}
+
+	service.attachProxyLatency(context.Background(), proxies)
+
+	require.Equal(t, "pass", proxies[0].GrokQualityStatus)
+	require.Equal(t, &checkedAt, proxies[0].GrokQualityCheckedAt)
+	require.Equal(t, &httpStatus, proxies[0].GrokQualityHTTPStatus)
+	require.Equal(t, "target reachable", proxies[0].GrokQualityMessage)
+}
 
 type proxyQualityRoundTripper func(*http.Request) (*http.Response, error)
 

@@ -887,6 +887,10 @@ export interface Proxy {
   quality_grade?: string
   quality_summary?: string
   quality_checked?: number
+  grok_quality_status?: 'unknown' | 'pass' | 'warn' | 'fail' | 'challenge'
+  grok_quality_checked_at?: string | null
+  grok_quality_http_status?: number | null
+  grok_quality_message?: string | null
   expires_at: string | null
   fallback_mode: 'none' | 'proxy' | 'direct'
   backup_proxy_id?: number | null

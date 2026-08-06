@@ -621,6 +621,10 @@ func (s *adminServiceImpl) attachProxyLatency(ctx context.Context, proxies []Pro
 		proxies[i].QualityGrade = info.QualityGrade
 		proxies[i].QualitySummary = info.QualitySummary
 		proxies[i].QualityChecked = info.QualityCheckedAt
+		proxies[i].GrokQualityStatus = info.GrokQualityStatus
+		proxies[i].GrokQualityCheckedAt = info.GrokQualityCheckedAt
+		proxies[i].GrokQualityHTTPStatus = info.GrokQualityHTTPStatus
+		proxies[i].GrokQualityMessage = info.GrokQualityMessage
 	}
 }
 

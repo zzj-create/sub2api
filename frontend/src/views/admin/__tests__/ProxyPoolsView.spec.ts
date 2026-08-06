@@ -7,6 +7,10 @@ import ProxyPoolsView from '../ProxyPoolsView.vue'
 const {
   listPools,
   listProxies,
+  listGroups,
+  listGroupOptions,
+  bindGroups,
+  unbindGroups,
   getAllProxies,
   assignProxies,
   removeProxies,
@@ -17,6 +21,10 @@ const {
 } = vi.hoisted(() => ({
   listPools: vi.fn(),
   listProxies: vi.fn(),
+  listGroups: vi.fn(),
+  listGroupOptions: vi.fn(),
+  bindGroups: vi.fn(),
+  unbindGroups: vi.fn(),
   getAllProxies: vi.fn(),
   assignProxies: vi.fn(),
   removeProxies: vi.fn(),
@@ -37,7 +45,11 @@ vi.mock('@/api/admin', () => ({
       update: vi.fn(),
       remove: vi.fn(),
       assignProxies,
-      removeProxies
+      removeProxies,
+      listGroups,
+      listGroupOptions,
+      bindGroups,
+      unbindGroups
     },
     proxies: {
       getAll: getAllProxies
@@ -113,6 +125,7 @@ function makePool() {
     healthy_proxy_count: 1,
     unhealthy_proxy_count: 1,
     bound_account_count: 4,
+    bound_group_count: 0,
     created_at: '2026-08-04T00:00:00Z',
     updated_at: '2026-08-04T00:00:00Z'
   }
@@ -165,6 +178,10 @@ describe('ProxyPoolsView', () => {
       }
     ])
     rebindLogs.mockResolvedValue([])
+    listGroups.mockResolvedValue([])
+    listGroupOptions.mockResolvedValue([])
+    bindGroups.mockResolvedValue({ bound_groups: 0, synced_accounts: 0 })
+    unbindGroups.mockResolvedValue({ unbound_groups: 1, detached_accounts: 0 })
     rebind.mockResolvedValue({ started: true, already_running: false })
     getAllProxies.mockResolvedValue([
       { id: 11, name: 'exit-a', host: 'proxy.example', port: 8080 },
@@ -192,11 +209,64 @@ describe('ProxyPoolsView', () => {
 
     expect(listProxies).toHaveBeenCalledWith(1)
     expect(rebindLogs).toHaveBeenCalledWith(1)
+    expect(listGroups).toHaveBeenCalledWith(1)
     expect(wrapper.text()).toContain('203.0.113.25')
     expect(wrapper.text()).toContain('42ms')
     expect(wrapper.text()).toContain('Example')
     expect(wrapper.text()).toContain('admin.proxyPools.grokQualityPassed')
     expect(wrapper.text()).toContain('HTTP 401')
+  })
+
+  it('binds selected groups and refreshes the pool', async () => {
+    listGroupOptions.mockResolvedValue([
+      { id: 21, name: 'Grok accounts', platform: 'grok', status: 'active', account_count: 4 },
+      { id: 22, name: 'Disabled group', platform: 'grok', status: 'inactive', account_count: 1 }
+    ])
+    bindGroups.mockResolvedValue({ bound_groups: 1, synced_accounts: 4 })
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('button[title="admin.proxyPools.details"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="bind-groups"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('input[data-test="bind-group-21"]').setValue(true)
+    await wrapper.get('[data-test="submit-bind-groups"]').trigger('click')
+    await flushPromises()
+
+    expect(bindGroups).toHaveBeenCalledWith(1, [21])
+    expect(showSuccess).toHaveBeenCalledWith('admin.proxyPools.bindGroupsSuccess')
+  })
+
+  it('does not allow a group already owned by another pool', async () => {
+    listGroupOptions.mockResolvedValue([
+      { id: 21, name: 'Other pool group', platform: 'grok', status: 'active', account_count: 2, bound_pool_id: 9, bound_pool_name: 'secondary' }
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('button[title="admin.proxyPools.details"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="bind-groups"]').trigger('click')
+    await flushPromises()
+
+    const checkbox = wrapper.get<HTMLInputElement>('input[data-test="bind-group-21"]')
+    expect(checkbox.element.disabled).toBe(true)
+  })
+
+  it('unbinds a group from the pool', async () => {
+    listGroups.mockResolvedValue([
+      { id: 21, name: 'Grok accounts', platform: 'grok', status: 'active', account_count: 4, bound_pool_id: 1 }
+    ])
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('button[title="admin.proxyPools.details"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('button[title="admin.proxyPools.unbindGroup"]').trigger('click')
+    await wrapper.get('[data-test="confirm-remove"]').trigger('click')
+    await flushPromises()
+
+    expect(unbindGroups).toHaveBeenCalledWith(1, [21])
+    expect(showSuccess).toHaveBeenCalledWith('admin.proxyPools.unbindGroupsSuccess')
   })
 
   it('runs a forced health check and refreshes the detail', async () => {

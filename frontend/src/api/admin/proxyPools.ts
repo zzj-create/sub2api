@@ -3,8 +3,11 @@ import type {
   ProxyPool,
   ProxyPoolWithStats,
   ProxyPoolProxy,
+  ProxyPoolGroup,
   ProxyPoolRebindLog,
-  ProxyPoolBindResult
+  ProxyPoolBindResult,
+  ProxyPoolGroupBindResult,
+  ProxyPoolGroupUnbindResult
 } from '@/types'
 
 export async function list(): Promise<ProxyPoolWithStats[]> {
@@ -47,6 +50,26 @@ export async function remove(id: number): Promise<void> {
 
 export async function listProxies(id: number): Promise<ProxyPoolProxy[]> {
   const { data } = await apiClient.get<ProxyPoolProxy[]>(`/admin/proxy-pools/${id}/proxies`)
+  return data
+}
+
+export async function listGroups(id: number): Promise<ProxyPoolGroup[]> {
+  const { data } = await apiClient.get<ProxyPoolGroup[]>(`/admin/proxy-pools/${id}/groups`)
+  return data
+}
+
+export async function listGroupOptions(id: number): Promise<ProxyPoolGroup[]> {
+  const { data } = await apiClient.get<ProxyPoolGroup[]>(`/admin/proxy-pools/${id}/group-options`)
+  return data
+}
+
+export async function bindGroups(id: number, groupIds: number[]): Promise<ProxyPoolGroupBindResult> {
+  const { data } = await apiClient.post<ProxyPoolGroupBindResult>(`/admin/proxy-pools/${id}/groups`, { group_ids: groupIds })
+  return data
+}
+
+export async function unbindGroups(id: number, groupIds: number[]): Promise<ProxyPoolGroupUnbindResult> {
+  const { data } = await apiClient.delete<ProxyPoolGroupUnbindResult>(`/admin/proxy-pools/${id}/groups`, { data: { group_ids: groupIds } })
   return data
 }
 
@@ -94,6 +117,10 @@ export default {
   update,
   remove,
   listProxies,
+  listGroups,
+  listGroupOptions,
+  bindGroups,
+  unbindGroups,
   assignProxies,
   removeProxies,
   bindAccounts,

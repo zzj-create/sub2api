@@ -237,10 +237,16 @@ func (s *ProxyPoolService) runPoolLocked(ctx context.Context, pool *ProxyPool, f
 	s.applyCachedPoolHealth(ctx, pool, proxies, now)
 	needCheck := poolProxiesDueForProbe(proxies, pool, forceProbe, now)
 	s.probePoolMembers(ctx, pool, needCheck)
+	changed := 0
+	if synced, syncErr := s.repo.SyncPoolGroupAccounts(ctx, pool.ID); syncErr != nil {
+		log.Printf("[ProxyPool] sync group accounts for pool %d failed: %v", pool.ID, syncErr)
+	} else {
+		changed += int(synced)
+	}
 
 	healthy := healthyPoolProxies(proxies)
 	if len(healthy) == 0 {
-		return 0
+		return changed
 	}
 	postCtx, cancel := context.WithTimeout(context.Background(), proxyPoolPostProcessTimeout)
 	defer cancel()
@@ -250,7 +256,6 @@ func (s *ProxyPoolService) runPoolLocked(ctx context.Context, pool *ProxyPool, f
 	}
 	defer releaseBind()
 
-	changed := 0
 	if pool.AutoRebind {
 		changed += s.rebindUnhealthy(postCtx, pool, proxies, healthy)
 	}
@@ -761,6 +766,74 @@ func (s *ProxyPoolService) waitForHealthyPoolProxies(ctx context.Context, poolID
 // CRUD and pool membership operations used by the admin handler.
 func (s *ProxyPoolService) ListPools(ctx context.Context) ([]ProxyPoolWithStats, error) {
 	return s.repo.ListPoolsWithStats(ctx)
+}
+
+func (s *ProxyPoolService) ListPoolGroups(ctx context.Context, id int64) ([]ProxyPoolGroup, error) {
+	if _, err := s.repo.GetPoolByID(ctx, id); err != nil {
+		return nil, err
+	}
+	return s.repo.ListPoolGroups(ctx, id)
+}
+
+func (s *ProxyPoolService) ListPoolGroupOptions(ctx context.Context, id int64) ([]ProxyPoolGroup, error) {
+	if _, err := s.repo.GetPoolByID(ctx, id); err != nil {
+		return nil, err
+	}
+	return s.repo.ListPoolGroupOptions(ctx, id)
+}
+
+func (s *ProxyPoolService) BindGroups(ctx context.Context, poolID int64, groupIDs []int64) (*ProxyPoolGroupBindResult, error) {
+	pool, err := s.repo.GetPoolByID(ctx, poolID)
+	if err != nil {
+		return nil, err
+	}
+	if !pool.IsActive() {
+		return nil, ErrProxyPoolDisabled
+	}
+	uniqueGroupIDs := uniquePositiveIDs(groupIDs)
+	if len(uniqueGroupIDs) == 0 {
+		return &ProxyPoolGroupBindResult{}, nil
+	}
+	release, ok := s.acquirePoolBind(ctx, poolID)
+	if !ok {
+		return nil, ErrProxyPoolGroupBindBusy
+	}
+	result, err := s.repo.BindGroupsToPool(ctx, poolID, uniqueGroupIDs)
+	release()
+	if err != nil {
+		return nil, err
+	}
+	// The mutation already synchronizes existing accounts. Start a normal run
+	// so healthy members are selected immediately and future failures use the
+	// same failover path as manually bound accounts.
+	s.startPoolRun(pool, false)
+	return result, nil
+}
+
+func (s *ProxyPoolService) UnbindGroups(ctx context.Context, poolID int64, groupIDs []int64) (*ProxyPoolGroupUnbindResult, error) {
+	if _, err := s.repo.GetPoolByID(ctx, poolID); err != nil {
+		return nil, err
+	}
+	uniqueGroupIDs := uniquePositiveIDs(groupIDs)
+	if len(uniqueGroupIDs) == 0 {
+		return &ProxyPoolGroupUnbindResult{}, nil
+	}
+	release, ok := s.acquirePoolBind(ctx, poolID)
+	if !ok {
+		return nil, ErrProxyPoolGroupBindBusy
+	}
+	result, err := s.repo.UnbindGroupsFromPool(ctx, poolID, uniqueGroupIDs)
+	release()
+	if err != nil {
+		return nil, err
+	}
+	// A remaining group binding may still claim some of the affected accounts.
+	// Let the next run resolve that deterministic ownership and assign a healthy
+	// member if necessary.
+	if pool, poolErr := s.repo.GetPoolByID(ctx, poolID); poolErr == nil && pool.IsActive() {
+		s.startPoolRun(pool, false)
+	}
+	return result, nil
 }
 
 func (s *ProxyPoolService) GetPool(ctx context.Context, id int64) (*ProxyPool, error) {

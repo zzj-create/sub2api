@@ -23,6 +23,9 @@ var (
 	ErrProxyPoolDisabled       = infraerrors.Conflict("PROXY_POOL_DISABLED", "proxy pool is disabled")
 	ErrProxyPoolBusy           = infraerrors.Conflict("PROXY_POOL_BUSY", "proxy pool health check is already running")
 	ErrProxyPoolBindBusy       = infraerrors.Conflict("PROXY_POOL_BIND_BUSY", "proxy pool account binding is already running")
+	ErrProxyPoolGroupBindBusy  = infraerrors.Conflict("PROXY_POOL_GROUP_BIND_BUSY", "proxy pool group binding is already running")
+	ErrProxyPoolGroupBound     = infraerrors.Conflict("PROXY_POOL_GROUP_ALREADY_BOUND", "one or more groups are already bound to another proxy pool")
+	ErrProxyPoolGroupInvalid   = infraerrors.BadRequest("PROXY_POOL_GROUP_INVALID", "one or more groups are missing or inactive")
 	ErrProxyPoolNameRequired   = infraerrors.BadRequest("PROXY_POOL_NAME_REQUIRED", "proxy pool name is required")
 	ErrProxyPoolInvalidStatus  = infraerrors.BadRequest("PROXY_POOL_INVALID_STATUS", "invalid proxy pool status")
 )
@@ -64,6 +67,30 @@ type ProxyPoolWithStats struct {
 	HealthyProxyCount   int64 `json:"healthy_proxy_count"`
 	UnhealthyProxyCount int64 `json:"unhealthy_proxy_count"`
 	BoundAccountCount   int64 `json:"bound_account_count"`
+	BoundGroupCount     int64 `json:"bound_group_count"`
+}
+
+// ProxyPoolGroup is a group bound to a pool or an option that can be bound.
+// BoundPoolID/BoundPoolName are populated by the options endpoint so the UI
+// can explain why a group cannot be selected for a second pool.
+type ProxyPoolGroup struct {
+	ID            int64  `json:"id"`
+	Name          string `json:"name"`
+	Platform      string `json:"platform"`
+	Status        string `json:"status"`
+	AccountCount  int64  `json:"account_count"`
+	BoundPoolID   *int64 `json:"bound_pool_id,omitempty"`
+	BoundPoolName string `json:"bound_pool_name,omitempty"`
+}
+
+type ProxyPoolGroupBindResult struct {
+	BoundGroups    int `json:"bound_groups"`
+	SyncedAccounts int `json:"synced_accounts"`
+}
+
+type ProxyPoolGroupUnbindResult struct {
+	UnboundGroups    int `json:"unbound_groups"`
+	DetachedAccounts int `json:"detached_accounts"`
 }
 
 type ProxyPoolProxy struct {
@@ -142,6 +169,11 @@ type ProxyPoolRepository interface {
 	GetPoolByID(ctx context.Context, id int64) (*ProxyPool, error)
 	ListPools(ctx context.Context) ([]ProxyPool, error)
 	ListPoolsWithStats(ctx context.Context) ([]ProxyPoolWithStats, error)
+	ListPoolGroups(ctx context.Context, poolID int64) ([]ProxyPoolGroup, error)
+	ListPoolGroupOptions(ctx context.Context, poolID int64) ([]ProxyPoolGroup, error)
+	BindGroupsToPool(ctx context.Context, poolID int64, groupIDs []int64) (*ProxyPoolGroupBindResult, error)
+	UnbindGroupsFromPool(ctx context.Context, poolID int64, groupIDs []int64) (*ProxyPoolGroupUnbindResult, error)
+	SyncPoolGroupAccounts(ctx context.Context, poolID int64) (int64, error)
 
 	ListPoolProxies(ctx context.Context, poolID int64) ([]ProxyPoolProxy, error)
 	AssignProxiesToPool(ctx context.Context, poolID int64, proxyIDs []int64) (int64, error)

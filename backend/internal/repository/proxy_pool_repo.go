@@ -133,6 +133,12 @@ func (r *proxyPoolRepository) DeletePool(ctx context.Context, id int64) error {
 	`, id); err != nil {
 		return err
 	}
+	// proxy_pool_groups references proxy pools with ON DELETE CASCADE, but pool
+	// deletion is intentionally soft. Remove the bindings explicitly so groups
+	// are not left owned by a pool that no longer exists in the admin UI.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM proxy_pool_groups WHERE pool_id = $1`, id); err != nil {
+		return err
+	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE proxy_pools SET deleted_at = NOW(), updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL
@@ -189,7 +195,8 @@ func (r *proxyPoolRepository) ListPoolsWithStats(ctx context.Context) ([]service
 		SELECT pp.id, pp.name, pp.description, pp.status, pp.health_interval_seconds,
 			pp.failure_threshold, pp.auto_rebind, pp.created_at, pp.updated_at, pp.deleted_at,
 			COALESCE(ps.proxy_count, 0), COALESCE(ps.healthy_count, 0),
-			COALESCE(ps.unhealthy_count, 0), COALESCE(ac.bound_account_count, 0)
+			COALESCE(ps.unhealthy_count, 0), COALESCE(ac.bound_account_count, 0),
+			COALESCE(gc.bound_group_count, 0)
 		FROM proxy_pools pp
 		LEFT JOIN LATERAL (
 			SELECT COUNT(*) AS proxy_count,
@@ -209,6 +216,12 @@ func (r *proxyPoolRepository) ListPoolsWithStats(ctx context.Context) ([]service
 			FROM accounts a
 			WHERE a.pool_id = pp.id AND a.deleted_at IS NULL
 		) ac ON TRUE
+		LEFT JOIN LATERAL (
+			SELECT COUNT(*) AS bound_group_count
+			FROM proxy_pool_groups ppg
+			JOIN groups g ON g.id = ppg.group_id AND g.deleted_at IS NULL
+			WHERE ppg.pool_id = pp.id
+		) gc ON TRUE
 		WHERE pp.deleted_at IS NULL
 		ORDER BY pp.id DESC
 	`)
@@ -229,6 +242,7 @@ func (r *proxyPoolRepository) ListPoolsWithStats(ctx context.Context) ([]service
 			&item.HealthIntervalSeconds, &item.FailureThreshold, &item.AutoRebind,
 			&item.CreatedAt, &item.UpdatedAt, &deletedAt,
 			&item.ProxyCount, &item.HealthyProxyCount, &item.UnhealthyProxyCount, &item.BoundAccountCount,
+			&item.BoundGroupCount,
 		); err != nil {
 			return nil, err
 		}
@@ -241,6 +255,287 @@ func (r *proxyPoolRepository) ListPoolsWithStats(ctx context.Context) ([]service
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+func (r *proxyPoolRepository) ListPoolGroups(ctx context.Context, poolID int64) ([]service.ProxyPoolGroup, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT g.id, g.name, g.platform, g.status, COUNT(DISTINCT a.id)
+		FROM proxy_pool_groups ppg
+		JOIN groups g ON g.id = ppg.group_id AND g.deleted_at IS NULL
+		LEFT JOIN account_groups ag ON ag.group_id = g.id
+		LEFT JOIN accounts a ON a.id = ag.account_id AND a.deleted_at IS NULL
+		WHERE ppg.pool_id = $1
+		GROUP BY g.id, g.name, g.platform, g.status
+		ORDER BY g.id ASC
+	`, poolID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make([]service.ProxyPoolGroup, 0)
+	for rows.Next() {
+		var group service.ProxyPoolGroup
+		if err := rows.Scan(&group.ID, &group.Name, &group.Platform, &group.Status, &group.AccountCount); err != nil {
+			return nil, err
+		}
+		pool := poolID
+		group.BoundPoolID = &pool
+		result = append(result, group)
+	}
+	return result, rows.Err()
+}
+
+func (r *proxyPoolRepository) ListPoolGroupOptions(ctx context.Context, poolID int64) ([]service.ProxyPoolGroup, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT g.id, g.name, g.platform, g.status, COUNT(DISTINCT a.id),
+			ppg.pool_id, COALESCE(pp.name, '')
+		FROM groups g
+		LEFT JOIN proxy_pool_groups ppg ON ppg.group_id = g.id
+		LEFT JOIN proxy_pools pp ON pp.id = ppg.pool_id AND pp.deleted_at IS NULL
+		LEFT JOIN account_groups ag ON ag.group_id = g.id
+		LEFT JOIN accounts a ON a.id = ag.account_id AND a.deleted_at IS NULL
+		WHERE g.deleted_at IS NULL
+		GROUP BY g.id, g.name, g.platform, g.status, ppg.pool_id, pp.name
+		ORDER BY CASE WHEN ppg.pool_id = $1 THEN 0 ELSE 1 END, g.id ASC
+	`, poolID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make([]service.ProxyPoolGroup, 0)
+	for rows.Next() {
+		var (
+			group       service.ProxyPoolGroup
+			boundPoolID sql.NullInt64
+			boundName   sql.NullString
+		)
+		if err := rows.Scan(
+			&group.ID, &group.Name, &group.Platform, &group.Status, &group.AccountCount,
+			&boundPoolID, &boundName,
+		); err != nil {
+			return nil, err
+		}
+		if boundPoolID.Valid && boundName.Valid {
+			group.BoundPoolID = &boundPoolID.Int64
+			group.BoundPoolName = boundName.String
+		}
+		result = append(result, group)
+	}
+	return result, rows.Err()
+}
+
+func (r *proxyPoolRepository) BindGroupsToPool(ctx context.Context, poolID int64, groupIDs []int64) (*service.ProxyPoolGroupBindResult, error) {
+	if len(groupIDs) == 0 {
+		return &service.ProxyPoolGroupBindResult{}, nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	validRows, err := tx.QueryContext(ctx, `
+		SELECT id FROM groups
+		WHERE id = ANY($1) AND deleted_at IS NULL AND status = 'active'
+	`, pq.Array(groupIDs))
+	if err != nil {
+		return nil, err
+	}
+	validIDs, err := scanInt64Rows(validRows)
+	_ = validRows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(validIDs) != len(groupIDs) {
+		return nil, service.ErrProxyPoolGroupInvalid
+	}
+
+	var conflictingGroupID int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT group_id FROM proxy_pool_groups
+		WHERE group_id = ANY($1) AND pool_id <> $2
+		LIMIT 1
+	`, pq.Array(groupIDs), poolID).Scan(&conflictingGroupID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil && conflictingGroupID > 0 {
+		return nil, service.ErrProxyPoolGroupBound
+	}
+
+	inserted, err := tx.ExecContext(ctx, `
+		INSERT INTO proxy_pool_groups (pool_id, group_id)
+		SELECT $1, unnest($2::bigint[])
+		ON CONFLICT DO NOTHING
+	`, poolID, pq.Array(groupIDs))
+	if err != nil {
+		return nil, err
+	}
+	insertedCount, err := inserted.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+
+	accountIDs, err := syncPoolGroupAccountsTx(ctx, tx, poolID)
+	if err != nil {
+		return nil, err
+	}
+	if len(accountIDs) > 0 {
+		if err := enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, map[string]any{
+			"account_ids": accountIDs,
+			"pool_id":     poolID,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &service.ProxyPoolGroupBindResult{BoundGroups: int(insertedCount), SyncedAccounts: len(accountIDs)}, nil
+}
+
+func (r *proxyPoolRepository) UnbindGroupsFromPool(ctx context.Context, poolID int64, groupIDs []int64) (*service.ProxyPoolGroupUnbindResult, error) {
+	if len(groupIDs) == 0 {
+		return &service.ProxyPoolGroupUnbindResult{}, nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	accountRows, err := tx.QueryContext(ctx, `
+		SELECT DISTINCT ag.account_id
+		FROM proxy_pool_groups ppg
+		JOIN account_groups ag ON ag.group_id = ppg.group_id
+		WHERE ppg.pool_id = $1 AND ppg.group_id = ANY($2)
+	`, poolID, pq.Array(groupIDs))
+	if err != nil {
+		return nil, err
+	}
+	affectedAccountIDs, err := scanInt64Rows(accountRows)
+	_ = accountRows.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	deleted, err := tx.ExecContext(ctx, `
+		DELETE FROM proxy_pool_groups
+		WHERE pool_id = $1 AND group_id = ANY($2)
+	`, poolID, pq.Array(groupIDs))
+	if err != nil {
+		return nil, err
+	}
+	deletedCount, err := deleted.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+
+	detachedIDs := make([]int64, 0)
+	if len(affectedAccountIDs) > 0 {
+		rows, updateErr := tx.QueryContext(ctx, `
+			UPDATE accounts a
+			SET pool_id = NULL, updated_at = NOW()
+			WHERE a.id = ANY($1) AND a.pool_id = $2 AND a.deleted_at IS NULL
+				AND NOT EXISTS (
+					SELECT 1
+					FROM account_groups ag
+					JOIN proxy_pool_groups ppg ON ppg.group_id = ag.group_id AND ppg.pool_id = $2
+					WHERE ag.account_id = a.id
+				)
+			RETURNING a.id
+		`, pq.Array(affectedAccountIDs), poolID)
+		if updateErr != nil {
+			return nil, updateErr
+		}
+		detachedIDs, err = scanInt64Rows(rows)
+		_ = rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(detachedIDs) > 0 {
+		if err := enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, map[string]any{
+			"account_ids": detachedIDs,
+		}); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &service.ProxyPoolGroupUnbindResult{UnboundGroups: int(deletedCount), DetachedAccounts: len(detachedIDs)}, nil
+}
+
+func (r *proxyPoolRepository) SyncPoolGroupAccounts(ctx context.Context, poolID int64) (int64, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	accountIDs, err := syncPoolGroupAccountsTx(ctx, tx, poolID)
+	if err != nil {
+		return 0, err
+	}
+	if len(accountIDs) > 0 {
+		if err := enqueueSchedulerOutbox(ctx, tx, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, map[string]any{
+			"account_ids": accountIDs,
+			"pool_id":     poolID,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int64(len(accountIDs)), nil
+}
+
+func syncPoolGroupAccountsTx(ctx context.Context, tx *sql.Tx, poolID int64) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		WITH desired AS (
+			SELECT DISTINCT ON (ag.account_id)
+				ag.account_id, ppg.pool_id
+			FROM account_groups ag
+			JOIN proxy_pool_groups ppg ON ppg.group_id = ag.group_id
+			JOIN groups g ON g.id = ag.group_id AND g.deleted_at IS NULL
+			JOIN proxy_pools pp ON pp.id = ppg.pool_id
+			JOIN accounts candidate ON candidate.id = ag.account_id AND candidate.deleted_at IS NULL
+			WHERE pp.deleted_at IS NULL AND pp.status = 'active'
+			ORDER BY ag.account_id, ag.priority ASC, ppg.pool_id ASC, ag.group_id ASC
+		), target AS (
+			SELECT account_id FROM desired WHERE pool_id = $1
+		)
+		UPDATE accounts a
+		SET pool_id = $1,
+			proxy_id = CASE
+				WHEN EXISTS (
+					SELECT 1 FROM proxies p
+					WHERE p.id = a.proxy_id AND p.pool_id = $1
+						AND p.deleted_at IS NULL AND p.status = 'active'
+				) THEN a.proxy_id
+				ELSE NULL
+			END,
+			updated_at = NOW()
+		FROM target
+		WHERE a.id = target.account_id AND a.deleted_at IS NULL
+			AND (
+				a.pool_id IS DISTINCT FROM $1 OR
+				(a.proxy_id IS NOT NULL AND NOT EXISTS (
+					SELECT 1 FROM proxies p
+					WHERE p.id = a.proxy_id AND p.pool_id = $1
+						AND p.deleted_at IS NULL AND p.status = 'active'
+				))
+			)
+		RETURNING a.id
+	`, poolID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanInt64Rows(rows)
 }
 
 func (r *proxyPoolRepository) ListPoolProxies(ctx context.Context, poolID int64) ([]service.ProxyPoolProxy, error) {

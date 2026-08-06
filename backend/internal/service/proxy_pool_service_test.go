@@ -20,6 +20,9 @@ type proxyPoolServiceTestRepo struct {
 	unassigned    []int64
 	assignments   []ProxyPoolAccountAssignment
 	pending       []int64
+	boundGroups   []int64
+	unboundGroups []int64
+	groupSyncs    int64
 	healthUpdates []proxyPoolHealthUpdate
 	logs          []ProxyPoolRebindLog
 }
@@ -76,6 +79,34 @@ func (r *proxyPoolServiceTestRepo) ListPoolsWithStats(_ context.Context) ([]Prox
 		return []ProxyPoolWithStats{}, nil
 	}
 	return []ProxyPoolWithStats{{ProxyPool: *r.pool}}, nil
+}
+
+func (r *proxyPoolServiceTestRepo) ListPoolGroups(_ context.Context, _ int64) ([]ProxyPoolGroup, error) {
+	return []ProxyPoolGroup{}, nil
+}
+
+func (r *proxyPoolServiceTestRepo) ListPoolGroupOptions(_ context.Context, _ int64) ([]ProxyPoolGroup, error) {
+	return []ProxyPoolGroup{}, nil
+}
+
+func (r *proxyPoolServiceTestRepo) BindGroupsToPool(_ context.Context, _ int64, groupIDs []int64) (*ProxyPoolGroupBindResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.boundGroups = append(r.boundGroups, groupIDs...)
+	return &ProxyPoolGroupBindResult{BoundGroups: len(groupIDs)}, nil
+}
+
+func (r *proxyPoolServiceTestRepo) UnbindGroupsFromPool(_ context.Context, _ int64, groupIDs []int64) (*ProxyPoolGroupUnbindResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.unboundGroups = append(r.unboundGroups, groupIDs...)
+	return &ProxyPoolGroupUnbindResult{UnboundGroups: len(groupIDs)}, nil
+}
+
+func (r *proxyPoolServiceTestRepo) SyncPoolGroupAccounts(_ context.Context, _ int64) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.groupSyncs, nil
 }
 
 func (r *proxyPoolServiceTestRepo) ListPoolProxies(_ context.Context, poolID int64) ([]ProxyPoolProxy, error) {
@@ -372,6 +403,33 @@ func TestProxyPoolBindAccountsQueuesUntilAHealthyProxyIsAvailable(t *testing.T) 
 		{AccountID: 101, ProxyID: 0},
 	}, result.Results)
 	require.Empty(t, repo.assignments)
+}
+
+func TestProxyPoolBindGroupsDeduplicatesAndStartsAutomaticManagement(t *testing.T) {
+	pool := &ProxyPool{ID: 1, Status: ProxyPoolStatusActive, HealthIntervalSeconds: 300, FailureThreshold: 2, AutoRebind: true}
+	repo := newProxyPoolServiceTestRepo(pool)
+	poolService := NewProxyPoolService(repo, nil, nil, nil, nil)
+	t.Cleanup(poolService.Stop)
+
+	result, err := poolService.BindGroups(context.Background(), pool.ID, []int64{21, 21, 0, 22})
+
+	require.NoError(t, err)
+	require.Equal(t, 2, result.BoundGroups)
+	repo.mu.Lock()
+	require.Equal(t, []int64{21, 22}, repo.boundGroups)
+	repo.mu.Unlock()
+}
+
+func TestProxyPoolRunSynchronizesAccountsAddedToBoundGroups(t *testing.T) {
+	now := time.Now()
+	pool := &ProxyPool{ID: 1, Status: ProxyPoolStatusActive, HealthIntervalSeconds: 300, FailureThreshold: 2, AutoRebind: true}
+	repo := newProxyPoolServiceTestRepo(pool, proxyPoolServiceTestProxy(1, 1, ProxyPoolHealthHealthy, &now))
+	repo.groupSyncs = 3
+	poolService := NewProxyPoolService(repo, nil, nil, nil, nil)
+
+	changed := poolService.RunPool(context.Background(), pool)
+
+	require.Equal(t, 3, changed)
 }
 
 func TestProxyPoolRunPoolRebindsAfterFailureThreshold(t *testing.T) {

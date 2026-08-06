@@ -99,7 +99,7 @@
 
     <BaseDialog :show="!!detailPool" :title="detailPool?.name || ''" width="extra-wide" @close="closeDetail">
       <div v-if="detailPool" class="space-y-6">
-        <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div class="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <div class="rounded bg-gray-50 px-3 py-2 dark:bg-dark-700">
             <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.proxyPools.proxies') }}</div>
             <div class="mt-1 text-xl font-semibold text-gray-900 dark:text-white">{{ detailProxies.length }}</div>
@@ -116,6 +116,35 @@
             <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.proxyPools.boundAccounts') }}</div>
             <div class="mt-1 text-xl font-semibold text-gray-900 dark:text-white">{{ boundAccounts }}</div>
           </div>
+          <div class="rounded bg-violet-50 px-3 py-2 dark:bg-violet-900/20">
+            <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.proxyPools.boundGroups') }}</div>
+            <div class="mt-1 text-xl font-semibold text-violet-700 dark:text-violet-300">{{ boundGroups.length }}</div>
+          </div>
+        </div>
+
+        <div class="border-y border-gray-200 py-3 dark:border-dark-600">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.proxyPools.groups') }}</h3>
+            <button class="btn btn-secondary btn-sm" :disabled="bindingGroups" data-test="bind-groups" @click="openBindGroups">
+              <Icon name="users" size="sm" class="mr-2" :class="bindingGroups ? 'animate-pulse' : ''" />
+              {{ t('admin.proxyPools.bindGroups') }}
+            </button>
+          </div>
+          <div v-if="boundGroups.length" class="mt-3 divide-y divide-gray-100 dark:divide-dark-700">
+            <div v-for="group in boundGroups" :key="group.id" class="flex flex-wrap items-center gap-3 py-2">
+              <div class="min-w-0 flex-1">
+                <div class="truncate font-medium text-gray-900 dark:text-white">{{ group.name }}</div>
+                <div class="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                  <span>{{ t(`admin.groups.platforms.${group.platform}`) }}</span>
+                  <span>{{ t('admin.proxyPools.groupAccounts', { count: group.account_count }) }}</span>
+                </div>
+              </div>
+              <button class="rounded p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20" :title="t('admin.proxyPools.unbindGroup')" @click="unbindingGroup = group">
+                <Icon name="x" size="sm" />
+              </button>
+            </div>
+          </div>
+          <div v-else class="mt-3 text-sm text-gray-400">{{ t('admin.proxyPools.noGroups') }}</div>
         </div>
 
         <div class="flex flex-wrap items-center justify-between gap-3 border-y border-gray-200 py-3 dark:border-dark-600">
@@ -242,6 +271,57 @@
       </div>
     </BaseDialog>
 
+    <BaseDialog :show="showBindGroups" :title="t('admin.proxyPools.bindGroups')" width="wide" @close="showBindGroups = false">
+      <div class="space-y-3">
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('admin.proxyPools.groupBindingHint') }}</p>
+        <input v-model.trim="groupSearch" class="input" :placeholder="t('admin.proxyPools.searchGroups')" />
+        <div class="max-h-96 overflow-y-auto border-y border-gray-200 py-2 dark:border-dark-600">
+          <label v-if="assignableGroups.length" class="sticky top-0 z-10 flex cursor-pointer items-center gap-3 border-b border-gray-200 bg-gray-50 px-2 py-2 text-sm font-medium text-gray-700 dark:border-dark-600 dark:bg-dark-800 dark:text-gray-200">
+            <input
+              type="checkbox"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500 dark:border-dark-600 dark:bg-dark-800"
+              :checked="allVisibleGroupsSelected"
+              :indeterminate="someVisibleGroupsSelected"
+              :aria-label="t('common.selectAll')"
+              data-test="select-all-groups"
+              @change="toggleAllVisibleGroups(($event.target as HTMLInputElement).checked)"
+            />
+            <span>{{ t('common.selectAll') }}</span>
+          </label>
+          <label
+            v-for="group in assignableGroups"
+            :key="group.id"
+            class="flex items-center gap-3 px-2 py-2"
+            :class="group.bound_pool_id && group.bound_pool_id !== detailPool?.id ? 'cursor-not-allowed opacity-60' : 'cursor-pointer hover:bg-gray-50 dark:hover:bg-dark-700'"
+          >
+            <input
+              type="checkbox"
+              class="h-4 w-4 rounded border-gray-300 text-primary-600"
+              :checked="selectedGroupIds.has(group.id)"
+              :disabled="!!group.bound_pool_id && group.bound_pool_id !== detailPool?.id || group.status !== 'active'"
+              :data-test="`bind-group-${group.id}`"
+              @change="toggleGroup(group.id)"
+            />
+            <span class="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-white">{{ group.name }}</span>
+            <span class="text-xs text-gray-500">{{ t(`admin.groups.platforms.${group.platform}`) }}</span>
+            <span class="text-xs text-gray-500">{{ t('admin.proxyPools.groupAccounts', { count: group.account_count }) }}</span>
+            <span v-if="group.bound_pool_id && group.bound_pool_id !== detailPool?.id" class="max-w-40 truncate text-xs text-amber-600 dark:text-amber-400" :title="t('admin.proxyPools.groupBoundTo', { name: group.bound_pool_name || group.bound_pool_id })">
+              {{ t('admin.proxyPools.groupBoundTo', { name: group.bound_pool_name || group.bound_pool_id }) }}
+            </span>
+          </label>
+          <div v-if="!assignableGroups.length" class="py-8 text-center text-sm text-gray-500">{{ t('admin.proxyPools.noAssignableGroups') }}</div>
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button class="btn btn-secondary" @click="showBindGroups = false">{{ t('common.cancel') }}</button>
+          <button class="btn btn-primary" :disabled="!selectedGroupIds.size || bindingGroups" data-test="submit-bind-groups" @click="bindSelectedGroups">
+            {{ bindingGroups ? t('common.saving') : t('admin.proxyPools.bindGroups') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
+
     <BaseDialog :show="showAssign" :title="t('admin.proxyPools.addProxies')" width="wide" @close="showAssign = false">
       <div class="space-y-3">
         <input v-model.trim="proxySearch" class="input" :placeholder="t('admin.proxies.searchProxies')" />
@@ -280,6 +360,14 @@
       @confirm="confirmBatchRemove"
       @cancel="showBatchRemoveDialog = false"
     />
+    <ConfirmDialog
+      :show="!!unbindingGroup"
+      :title="t('admin.proxyPools.unbindGroupsTitle')"
+      :message="t('admin.proxyPools.unbindGroupsConfirm', { name: unbindingGroup?.name })"
+      :danger="true"
+      @confirm="confirmUnbindGroup"
+      @cancel="unbindingGroup = null"
+    />
   </AppLayout>
 </template>
 
@@ -298,7 +386,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { formatDateTime } from '@/utils/format'
 import { getProxyPoolMemberState, type ProxyHealthFilter } from '@/utils/proxyHealth'
 import type { Column } from '@/components/common/types'
-import type { Proxy, ProxyPoolWithStats, ProxyPoolProxy, ProxyPoolRebindLog } from '@/types'
+import type { Proxy, ProxyPoolWithStats, ProxyPoolProxy, ProxyPoolGroup, ProxyPoolRebindLog } from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -310,6 +398,8 @@ const editingPool = ref<ProxyPoolWithStats | null>(null)
 const deletingPool = ref<ProxyPoolWithStats | null>(null)
 const detailPool = ref<ProxyPoolWithStats | null>(null)
 const detailProxies = ref<ProxyPoolProxy[]>([])
+const boundGroups = ref<ProxyPoolGroup[]>([])
+const groupOptions = ref<ProxyPoolGroup[]>([])
 const logs = ref<ProxyPoolRebindLog[]>([])
 const rebinding = ref(false)
 const showAssign = ref(false)
@@ -322,12 +412,19 @@ const memberStatusFilter = ref<ProxyHealthFilter>('all')
 const selectedMemberProxyIds = ref(new Set<number>())
 const showBatchRemoveDialog = ref(false)
 const batchRemoving = ref(false)
+const showBindGroups = ref(false)
+const bindingGroups = ref(false)
+const groupSearch = ref('')
+const selectedGroupIds = ref(new Set<number>())
+const unbindingGroup = ref<ProxyPoolGroup | null>(null)
+const unbindingGroups = ref(false)
 
 const columns: Column[] = [
   { key: 'name', label: t('admin.proxyPools.name') },
   { key: 'status', label: t('admin.proxyPools.status') },
   { key: 'health', label: t('admin.proxyPools.health') },
   { key: 'bound_account_count', label: t('admin.proxyPools.boundAccounts') },
+  { key: 'bound_group_count', label: t('admin.proxyPools.boundGroups') },
   { key: 'health_interval_seconds', label: t('admin.proxyPools.healthInterval') },
   { key: 'failure_threshold', label: t('admin.proxyPools.failureThreshold') },
   { key: 'auto_rebind', label: t('admin.proxyPools.autoRebind') },
@@ -347,6 +444,21 @@ const form = reactive({ name: '', description: '', status: 'active', health_inte
 const healthyCount = computed(() => detailProxies.value.filter((proxy) => proxy.pool_health === 'healthy').length)
 const unhealthyCount = computed(() => detailProxies.value.filter((proxy) => proxy.pool_health === 'unhealthy').length)
 const boundAccounts = computed(() => detailProxies.value.reduce((sum, proxy) => sum + proxy.account_count, 0))
+const assignableGroups = computed(() => {
+  const currentIds = new Set(boundGroups.value.map((group) => group.id))
+  const query = groupSearch.value.toLowerCase()
+  return groupOptions.value.filter((group) => {
+    if (currentIds.has(group.id)) return false
+    if (!query) return true
+    return [group.name, group.platform, group.status]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(query))
+  })
+})
+const selectableGroups = computed(() => assignableGroups.value.filter((group) => group.status === 'active' && (!group.bound_pool_id || group.bound_pool_id === detailPool.value?.id)))
+const visibleSelectedGroupCount = computed(() => selectableGroups.value.filter((group) => selectedGroupIds.value.has(group.id)).length)
+const allVisibleGroupsSelected = computed(() => selectableGroups.value.length > 0 && visibleSelectedGroupCount.value === selectableGroups.value.length)
+const someVisibleGroupsSelected = computed(() => visibleSelectedGroupCount.value > 0 && !allVisibleGroupsSelected.value)
 const assignableProxies = computed(() => {
   const memberIds = new Set(detailProxies.value.map((proxy) => proxy.id))
   const query = proxySearch.value.toLowerCase()
@@ -383,6 +495,10 @@ async function openDetail(pool: ProxyPoolWithStats) {
   memberStatusFilter.value = 'all'
   selectedMemberProxyIds.value = new Set()
   showBatchRemoveDialog.value = false
+  showBindGroups.value = false
+  selectedGroupIds.value = new Set()
+  groupSearch.value = ''
+  unbindingGroup.value = null
   detailPool.value = pool
   try {
     await refreshDetail()
@@ -390,14 +506,73 @@ async function openDetail(pool: ProxyPoolWithStats) {
     appStore.showError(t('admin.proxyPools.loadFailed'))
   }
 }
-function closeDetail() { detailPool.value = null; detailProxies.value = []; logs.value = []; memberSearch.value = ''; memberStatusFilter.value = 'all'; selectedMemberProxyIds.value = new Set(); showBatchRemoveDialog.value = false }
+function closeDetail() { detailPool.value = null; detailProxies.value = []; boundGroups.value = []; groupOptions.value = []; logs.value = []; memberSearch.value = ''; memberStatusFilter.value = 'all'; selectedMemberProxyIds.value = new Set(); selectedGroupIds.value = new Set(); groupSearch.value = ''; showBindGroups.value = false; showBatchRemoveDialog.value = false; unbindingGroup.value = null }
 async function refreshDetail() {
   if (!detailPool.value) return
-  const [proxies, rebindEntries] = await Promise.all([adminAPI.proxyPools.listProxies(detailPool.value.id), adminAPI.proxyPools.rebindLogs(detailPool.value.id)])
+  const [proxies, rebindEntries, groups] = await Promise.all([adminAPI.proxyPools.listProxies(detailPool.value.id), adminAPI.proxyPools.rebindLogs(detailPool.value.id), adminAPI.proxyPools.listGroups(detailPool.value.id)])
   detailProxies.value = proxies
   logs.value = rebindEntries
+  boundGroups.value = groups
   const memberIds = new Set(proxies.map((proxy) => proxy.id))
   selectedMemberProxyIds.value = new Set([...selectedMemberProxyIds.value].filter((id) => memberIds.has(id)))
+}
+async function openBindGroups() {
+  if (!detailPool.value || bindingGroups.value) return
+  groupSearch.value = ''
+  selectedGroupIds.value = new Set()
+  bindingGroups.value = true
+  try {
+    groupOptions.value = await adminAPI.proxyPools.listGroupOptions(detailPool.value.id)
+    showBindGroups.value = true
+  } catch {
+    appStore.showError(t('admin.proxyPools.loadFailed'))
+  } finally {
+    bindingGroups.value = false
+  }
+}
+function toggleGroup(id: number) {
+  const group = selectableGroups.value.find((candidate) => candidate.id === id)
+  if (!group) return
+  const next = new Set(selectedGroupIds.value)
+  next.has(id) ? next.delete(id) : next.add(id)
+  selectedGroupIds.value = next
+}
+function toggleAllVisibleGroups(checked: boolean) {
+  const next = new Set(selectedGroupIds.value)
+  for (const group of selectableGroups.value) {
+    checked ? next.add(group.id) : next.delete(group.id)
+  }
+  selectedGroupIds.value = next
+}
+async function bindSelectedGroups() {
+  if (!detailPool.value || selectedGroupIds.value.size === 0 || bindingGroups.value) return
+  bindingGroups.value = true
+  try {
+    const result = await adminAPI.proxyPools.bindGroups(detailPool.value.id, [...selectedGroupIds.value])
+    showBindGroups.value = false
+    selectedGroupIds.value = new Set()
+    appStore.showSuccess(t('admin.proxyPools.bindGroupsSuccess', { groups: result.bound_groups, accounts: result.synced_accounts }))
+    await Promise.all([refreshDetail(), loadPools()])
+  } catch {
+    appStore.showError(t('admin.proxyPools.bindGroupsFailed'))
+  } finally {
+    bindingGroups.value = false
+  }
+}
+async function confirmUnbindGroup() {
+  if (!detailPool.value || !unbindingGroup.value || unbindingGroups.value) return
+  const group = unbindingGroup.value
+  unbindingGroups.value = true
+  try {
+    const result = await adminAPI.proxyPools.unbindGroups(detailPool.value.id, [group.id])
+    unbindingGroup.value = null
+    appStore.showSuccess(t('admin.proxyPools.unbindGroupsSuccess', { accounts: result.detached_accounts }))
+    await Promise.all([refreshDetail(), loadPools()])
+  } catch {
+    appStore.showError(t('admin.proxyPools.unbindGroupsFailed'))
+  } finally {
+    unbindingGroups.value = false
+  }
 }
 async function runRebind() {
   if (!detailPool.value) return

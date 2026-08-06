@@ -1021,3 +1021,69 @@ func (s *GroupRepoSuite) TestDelete_SoftDeletedGroup_lockForUpdate() {
 	s.Require().Error(err, "should fail to get soft-deleted group")
 	s.Require().ErrorIs(err, service.ErrGroupNotFound)
 }
+
+func (s *GroupRepoSuite) TestDeleteCascade_CleansProxyPoolGroupBindingAndReassignsAccounts() {
+	target := &service.Group{
+		Name:             "proxy-pool-delete-target",
+		Platform:         service.PlatformAnthropic,
+		RateMultiplier:   1.0,
+		Status:           service.StatusActive,
+		SubscriptionType: service.SubscriptionTypeStandard,
+	}
+	remaining := &service.Group{
+		Name:             "proxy-pool-delete-remaining",
+		Platform:         service.PlatformAnthropic,
+		RateMultiplier:   1.0,
+		Status:           service.StatusActive,
+		SubscriptionType: service.SubscriptionTypeStandard,
+	}
+	s.Require().NoError(s.repo.Create(s.ctx, target))
+	s.Require().NoError(s.repo.Create(s.ctx, remaining))
+
+	var poolOneID, poolTwoID int64
+	s.Require().NoError(scanSingleRow(s.ctx, s.tx,
+		"INSERT INTO proxy_pools (name, status) VALUES ($1, 'active') RETURNING id",
+		[]any{"group-delete-pool-one"}, &poolOneID))
+	s.Require().NoError(scanSingleRow(s.ctx, s.tx,
+		"INSERT INTO proxy_pools (name, status) VALUES ($1, 'active') RETURNING id",
+		[]any{"group-delete-pool-two"}, &poolTwoID))
+
+	var proxyID, accountID int64
+	s.Require().NoError(scanSingleRow(s.ctx, s.tx,
+		"INSERT INTO proxies (name, protocol, host, port, status, pool_id) VALUES ($1, 'socks5', '127.0.0.1', 1080, 'active', $2) RETURNING id",
+		[]any{"group-delete-proxy-one", poolOneID}, &proxyID))
+	s.Require().NoError(scanSingleRow(s.ctx, s.tx,
+		"INSERT INTO accounts (name, platform, type, pool_id, proxy_id) VALUES ($1, $2, $3, $4, $5) RETURNING id",
+		[]any{"group-delete-account", service.PlatformAnthropic, service.AccountTypeOAuth, poolOneID, proxyID}, &accountID))
+
+	_, err := s.tx.ExecContext(s.ctx, "INSERT INTO proxy_pool_groups (pool_id, group_id) VALUES ($1, $2), ($3, $4)", poolOneID, target.ID, poolTwoID, remaining.ID)
+	s.Require().NoError(err)
+	_, err = s.tx.ExecContext(s.ctx, "INSERT INTO account_groups (account_id, group_id, priority, created_at) VALUES ($1, $2, 1, NOW()), ($1, $3, 2, NOW())", accountID, target.ID, remaining.ID)
+	s.Require().NoError(err)
+
+	_, err = s.repo.DeleteCascade(s.ctx, target.ID)
+	s.Require().NoError(err)
+
+	var boundGroups, accountPoolID sql.NullInt64
+	s.Require().NoError(scanSingleRow(s.ctx, s.tx,
+		"SELECT COUNT(*) FROM proxy_pool_groups WHERE group_id = $1",
+		[]any{target.ID}, &boundGroups))
+	s.Require().Zero(boundGroups.Int64)
+	s.Require().NoError(scanSingleRow(s.ctx, s.tx,
+		"SELECT pool_id FROM accounts WHERE id = $1",
+		[]any{accountID}, &accountPoolID))
+	s.Require().True(accountPoolID.Valid)
+	s.Require().Equal(poolTwoID, accountPoolID.Int64)
+
+	var accountProxyID sql.NullInt64
+	s.Require().NoError(scanSingleRow(s.ctx, s.tx,
+		"SELECT proxy_id FROM accounts WHERE id = $1",
+		[]any{accountID}, &accountProxyID))
+	s.Require().False(accountProxyID.Valid, "proxy from the deleted pool must not be retained")
+
+	var accountGroupCount int
+	s.Require().NoError(scanSingleRow(s.ctx, s.tx,
+		"SELECT COUNT(*) FROM account_groups WHERE account_id = $1 AND group_id = $2",
+		[]any{accountID, target.ID}, &accountGroupCount))
+	s.Require().Zero(accountGroupCount)
+}

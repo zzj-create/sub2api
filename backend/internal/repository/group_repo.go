@@ -759,6 +759,107 @@ func (r *groupRepository) DeleteAccountGroupsByGroupID(ctx context.Context, grou
 	return affected, nil
 }
 
+// cleanupDeletedGroupProxyPoolBindings removes the binding for a group that is
+// about to be deleted and reconciles accounts that were assigned through that
+// binding. Group deletion is a soft delete, so the FK cascade cannot perform
+// this cleanup for us.
+func cleanupDeletedGroupProxyPoolBindings(ctx context.Context, exec sqlExecutor, groupID int64) ([]int64, error) {
+	rows, err := exec.QueryContext(ctx, `
+		SELECT DISTINCT ag.account_id, ppg.pool_id
+		FROM account_groups ag
+		JOIN proxy_pool_groups ppg ON ppg.group_id = ag.group_id
+		WHERE ag.group_id = $1
+	`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	type affectedAccount struct {
+		accountID int64
+		poolID    int64
+	}
+	affected := make([]affectedAccount, 0)
+	for rows.Next() {
+		var item affectedAccount
+		if err := rows.Scan(&item.accountID, &item.poolID); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		affected = append(affected, item)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if _, err := exec.ExecContext(ctx, `DELETE FROM proxy_pool_groups WHERE group_id = $1`, groupID); err != nil {
+		return nil, err
+	}
+	if len(affected) == 0 {
+		return nil, nil
+	}
+
+	accountIDsByPool := make(map[int64][]int64)
+	for _, item := range affected {
+		accountIDsByPool[item.poolID] = append(accountIDsByPool[item.poolID], item.accountID)
+	}
+	changedAccountIDs := make([]int64, 0, len(affected))
+	for poolID, accountIDs := range accountIDsByPool {
+		rows, err := exec.QueryContext(ctx, `
+			WITH affected(account_id) AS (
+				SELECT unnest($1::bigint[])
+			), desired AS (
+				SELECT DISTINCT ON (ag.account_id)
+					ag.account_id, ppg.pool_id
+				FROM account_groups ag
+				JOIN affected af ON af.account_id = ag.account_id
+				JOIN proxy_pool_groups ppg ON ppg.group_id = ag.group_id
+				JOIN groups g ON g.id = ag.group_id AND g.deleted_at IS NULL
+				JOIN proxy_pools pp ON pp.id = ppg.pool_id
+				WHERE pp.deleted_at IS NULL AND pp.status = 'active'
+				ORDER BY ag.account_id, ag.priority ASC, ppg.pool_id ASC, ag.group_id ASC
+			), updated AS (
+				UPDATE accounts a
+				SET pool_id = d.pool_id,
+					proxy_id = CASE
+						WHEN d.pool_id IS NOT NULL AND EXISTS (
+							SELECT 1 FROM proxies p
+							WHERE p.id = a.proxy_id AND p.pool_id = d.pool_id
+								AND p.deleted_at IS NULL AND p.status = 'active'
+						) THEN a.proxy_id
+						ELSE NULL
+					END,
+					updated_at = NOW()
+				FROM affected af
+				LEFT JOIN desired d ON d.account_id = af.account_id
+				WHERE a.id = af.account_id AND a.pool_id = $2
+					AND (
+						a.pool_id IS DISTINCT FROM d.pool_id OR
+						(a.proxy_id IS NOT NULL AND NOT EXISTS (
+							SELECT 1 FROM proxies p
+							WHERE p.id = a.proxy_id AND p.pool_id = d.pool_id
+								AND p.deleted_at IS NULL AND p.status = 'active'
+						))
+					)
+				RETURNING a.id
+			)
+			SELECT id FROM updated ORDER BY id
+		`, pq.Array(accountIDs), poolID)
+		if err != nil {
+			return nil, err
+		}
+		ids, scanErr := scanInt64Rows(rows)
+		_ = rows.Close()
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		changedAccountIDs = append(changedAccountIDs, ids...)
+	}
+	sort.Slice(changedAccountIDs, func(i, j int) bool { return changedAccountIDs[i] < changedAccountIDs[j] })
+	return changedAccountIDs, nil
+}
+
 func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64, error) {
 	g, err := r.client.Group.Query().Where(group.IDEQ(id)).Only(ctx)
 	if err != nil {
@@ -838,17 +939,31 @@ func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64,
 		return nil, err
 	}
 
-	// 3. Delete account_groups join rows.
+	// 3. Remove proxy-pool group ownership and reconcile affected accounts before
+	// deleting the account_groups rows.
+	proxyPoolAccountIDs, err := cleanupDeletedGroupProxyPoolBindings(ctx, exec, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(proxyPoolAccountIDs) > 0 {
+		if err := enqueueSchedulerOutbox(ctx, exec, service.SchedulerOutboxEventAccountBulkChanged, nil, nil, map[string]any{
+			"account_ids": proxyPoolAccountIDs,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	// 4. Delete account_groups join rows.
 	if _, err := exec.ExecContext(ctx, "DELETE FROM account_groups WHERE group_id = $1", id); err != nil {
 		return nil, err
 	}
 
-	// 4. Soft-delete composite model routes owned by this group.
+	// 5. Soft-delete composite model routes owned by this group.
 	if _, err := exec.ExecContext(ctx, "UPDATE composite_model_routes SET deleted_at = NOW() WHERE group_id = $1 AND deleted_at IS NULL", id); err != nil {
 		return nil, err
 	}
 
-	// 5. Soft-delete group itself.
+	// 6. Soft-delete group itself.
 	if _, err := txClient.Group.Delete().Where(group.IDEQ(id)).Exec(ctx); err != nil {
 		return nil, err
 	}

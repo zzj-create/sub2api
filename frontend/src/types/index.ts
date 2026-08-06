@@ -916,6 +916,27 @@ export interface ProxyPoolWithStats extends ProxyPool {
   healthy_proxy_count: number
   unhealthy_proxy_count: number
   bound_account_count: number
+  bound_group_count: number
+}
+
+export interface ProxyPoolGroup {
+  id: number
+  name: string
+  platform: string
+  status: string
+  account_count: number
+  bound_pool_id?: number | null
+  bound_pool_name?: string
+}
+
+export interface ProxyPoolGroupBindResult {
+  bound_groups: number
+  synced_accounts: number
+}
+
+export interface ProxyPoolGroupUnbindResult {
+  unbound_groups: number
+  detached_accounts: number
 }
 
 export interface ProxyPoolProxy extends Proxy {

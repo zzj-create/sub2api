@@ -336,6 +336,11 @@ func (s *ProxyPoolService) applyProxyPoolQualityObservation(
 	proxy.QualityDurationMs = observation.DurationMs
 	proxy.QualityFirstTokenMs = observation.FirstTokenMs
 	proxy.QualityLastSource = observation.Source
+	proxy.QualityAccountID = nil
+	if observation.AccountID > 0 {
+		accountID := observation.AccountID
+		proxy.QualityAccountID = &accountID
+	}
 	if observation.Reason != "" && !shouldQuarantine && !shouldCrossVerify && !forceRecoveryIsolation {
 		proxy.QualityLastReason = reason
 	}
@@ -402,6 +407,7 @@ func proxyPoolHealthSnapshot(proxy *ProxyPoolProxy) ProxyPoolHealthSnapshot {
 		QualityLastReason:      proxy.QualityLastReason,
 		QualityObservedAt:      proxy.QualityObservedAt,
 		QualityProbedAt:        proxy.QualityProbedAt,
+		QualityAccountID:       proxy.QualityAccountID,
 	}
 }
 
@@ -485,6 +491,7 @@ func (s *ProxyPoolService) ObserveGrokResponse(ctx context.Context, account *Acc
 		FirstTokenMs: firstTokenMs,
 		HasThinking:  result.HasThinking,
 		Source:       "passive",
+		AccountID:    account.ID,
 	}
 	obs.OutputTPS = clampProxyPoolTPS(ComputeProxyPoolTPS(obs.OutputTokens, obs.DurationMs, obs.FirstTokenMs, policy.MinGenerationMs))
 	quarantined, crossVerify := s.applyProxyPoolQualityObservation(ctx, pool, target, proxies, obs)

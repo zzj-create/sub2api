@@ -577,6 +577,8 @@ func ProxyPoolProxyFromService(p *service.ProxyPoolProxy) *ProxyPoolProxy {
 		QualityLastReason:      p.QualityLastReason,
 		QualityObservedAt:      p.QualityObservedAt,
 		QualityProbedAt:        p.QualityProbedAt,
+		QualityAccountID:       p.QualityAccountID,
+		QualityAccountName:     p.QualityAccountName,
 		GrokQualityStatus:      p.GrokQualityStatus,
 		GrokQualityCheckedAt:   p.GrokQualityCheckedAt,
 		GrokQualityHTTPStatus:  p.GrokQualityHTTPStatus,

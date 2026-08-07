@@ -184,6 +184,7 @@ func (r *proxyPoolServiceTestRepo) UpdateProxyPoolHealth(_ context.Context, pool
 	proxy.QualityLastReason = snapshot.QualityLastReason
 	proxy.QualityObservedAt = snapshot.QualityObservedAt
 	proxy.QualityProbedAt = snapshot.QualityProbedAt
+	proxy.QualityAccountID = snapshot.QualityAccountID
 	r.proxies[proxyID] = proxy
 	r.healthUpdates = append(r.healthUpdates, proxyPoolHealthUpdate{
 		proxyID: proxyID, health: snapshot.Health, failures: snapshot.Failures, grokStatus: snapshot.GrokQualityStatus,

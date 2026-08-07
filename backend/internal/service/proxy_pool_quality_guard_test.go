@@ -306,6 +306,33 @@ func TestProxyPoolQualityAccountErrorDoesNotSpendProxyStrikes(t *testing.T) {
 	require.Equal(t, ProxyPoolQualityIgnored, proxy.QualityClass)
 }
 
+func TestProxyPoolQualityObservationTracksAndClearsProbeAccount(t *testing.T) {
+	pool := qualityGuardTestPool()
+	repo := newProxyPoolServiceTestRepo(pool,
+		qualityGuardTestProxy(1, pool.ID, ProxyPoolHealthHealthy),
+		qualityGuardTestProxy(2, pool.ID, ProxyPoolHealthHealthy),
+	)
+	svc := NewProxyPoolService(repo, nil, nil, nil, nil)
+
+	applyQualityTestObservation(t, svc, repo, pool, 2, ProxyPoolQualityObservation{
+		Classification: ProxyPoolQualityIgnored,
+		ErrorKind:      ProxyPoolQualityErrorAccount,
+		Source:         "active",
+		AccountID:      99,
+		Reason:         "probe quota exhausted",
+	})
+	require.NotNil(t, repo.proxies[2].QualityAccountID)
+	require.Equal(t, int64(99), *repo.proxies[2].QualityAccountID)
+
+	applyQualityTestObservation(t, svc, repo, pool, 2, ProxyPoolQualityObservation{
+		Classification: ProxyPoolQualityIgnored,
+		ErrorKind:      ProxyPoolQualityErrorNoAccount,
+		Source:         "active",
+		Reason:         "no schedulable Grok account is available for this pool",
+	})
+	require.Nil(t, repo.proxies[2].QualityAccountID)
+}
+
 func TestProxyPoolQualityTransportErrorsQuarantineAfterConsecutiveHits(t *testing.T) {
 	pool := qualityGuardTestPool()
 	repo := newProxyPoolServiceTestRepo(pool,

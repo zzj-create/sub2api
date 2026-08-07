@@ -975,6 +975,8 @@ export interface ProxyPoolProxy extends Proxy {
   quality_last_reason?: string
   quality_observed_at?: string | null
   quality_probed_at?: string | null
+  quality_account_id?: number | null
+  quality_account_name?: string
   grok_quality_status: 'unknown' | 'pass' | 'warn' | 'fail' | 'challenge'
   grok_quality_checked_at?: string | null
   grok_quality_http_status?: number | null

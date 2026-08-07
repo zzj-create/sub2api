@@ -326,6 +326,20 @@
                   <div v-if="proxy.quality_class && proxy.quality_class !== 'unknown'" class="mt-1 text-xs text-gray-500">
                     {{ qualityLabel(proxy.quality_class) }}<span v-if="proxy.quality_output_tps"> / {{ Math.round(proxy.quality_output_tps) }} tok/s</span>
                   </div>
+                  <div v-if="proxy.quality_observed_at" class="mt-1 text-xs text-gray-500">
+                    {{ qualitySourceLabel(proxy.quality_last_source) }} · {{ formatDateTime(proxy.quality_observed_at) }}
+                  </div>
+                  <div v-if="proxy.quality_account_id" class="mt-1 max-w-64 truncate text-xs text-gray-600 dark:text-gray-300" data-test="quality-account">
+                    {{ t('admin.proxyPools.qualityObservedAccount') }}:
+                    <span class="font-medium text-gray-800 dark:text-gray-100">{{ proxy.quality_account_name || `#${proxy.quality_account_id}` }}</span>
+                    <span v-if="proxy.quality_account_name" class="text-gray-400">#{{ proxy.quality_account_id }}</span>
+                  </div>
+                  <div v-else-if="proxy.quality_last_source === 'active'" class="mt-1 text-xs text-amber-600 dark:text-amber-400" data-test="quality-account-empty">
+                    {{ t('admin.proxyPools.qualityObservedAccount') }}: {{ t('admin.proxyPools.qualityNoAvailableAccount') }}
+                  </div>
+                  <div v-if="proxy.quality_last_reason" class="mt-1 max-w-64 truncate text-xs text-gray-500" :title="proxy.quality_last_reason" data-test="quality-reason">
+                    {{ proxy.quality_last_reason }}
+                  </div>
                   <div v-if="isActiveQualityQuarantine(proxy)" class="mt-1 text-xs font-medium text-red-600 dark:text-red-400">
                     {{ t('admin.proxyPools.qualityQuarantinedUntil', { time: formatDateTime(proxy.quarantined_until!) }) }}
                   </div>
@@ -801,6 +815,11 @@ function grokQualityLabel(status: string) {
 function qualityLabel(status: string) {
   const key = `admin.proxyPools.qualityClass${status.charAt(0).toUpperCase()}${status.slice(1)}`
   return t(key)
+}
+function qualitySourceLabel(source?: string) {
+  if (source === 'active') return t('admin.proxyPools.qualitySourceActive')
+  if (source === 'passive') return t('admin.proxyPools.qualitySourcePassive')
+  return source || '-'
 }
 function isActiveQualityQuarantine(proxy: ProxyPoolProxy) {
   return !!proxy.quarantined_until && new Date(proxy.quarantined_until).getTime() > Date.now()

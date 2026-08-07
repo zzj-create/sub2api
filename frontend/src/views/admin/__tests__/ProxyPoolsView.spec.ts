@@ -170,6 +170,12 @@ describe('ProxyPoolsView', () => {
         grok_quality_checked_at: '2026-08-04T00:00:00Z',
         grok_quality_http_status: 401,
         grok_quality_message: 'HTTP 401 (target reachable)',
+        quality_class: 'healthy',
+        quality_last_source: 'active',
+        quality_last_reason: 'quality observation recorded',
+        quality_observed_at: '2026-08-04T00:01:00Z',
+        quality_account_id: 42,
+        quality_account_name: 'probe-account@example.com',
         account_count: 4,
         latency_ms: 42,
         ip_address: '203.0.113.25',
@@ -215,6 +221,27 @@ describe('ProxyPoolsView', () => {
     expect(wrapper.text()).toContain('Example')
     expect(wrapper.text()).toContain('admin.proxyPools.grokQualityPassed')
     expect(wrapper.text()).toContain('HTTP 401')
+    expect(wrapper.get('[data-test="quality-account"]').text()).toContain('probe-account@example.com')
+    expect(wrapper.get('[data-test="quality-account"]').text()).toContain('#42')
+    expect(wrapper.text()).toContain('admin.proxyPools.qualitySourceActive')
+    expect(wrapper.get('[data-test="quality-reason"]').text()).toContain('quality observation recorded')
+  })
+
+  it('shows when an active probe has no available account', async () => {
+    listProxies.mockResolvedValue([{
+      ...makeProxy(11, 'exit-a'),
+      quality_last_source: 'active',
+      quality_last_reason: 'no schedulable Grok account is available for this pool',
+      quality_observed_at: '2026-08-04T00:01:00Z'
+    }])
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('button[title="admin.proxyPools.details"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="quality-account-empty"]').text()).toContain('admin.proxyPools.qualityNoAvailableAccount')
+    expect(wrapper.get('[data-test="quality-reason"]').text()).toContain('no schedulable Grok account')
   })
 
   it('binds selected groups and refreshes the pool', async () => {

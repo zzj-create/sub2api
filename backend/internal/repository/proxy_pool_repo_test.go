@@ -41,6 +41,80 @@ func TestProxyPoolRepositoryPersistsGrokQualityHealth(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestProxyPoolRepositoryPersistsQualityAccount(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	checkedAt := time.Now().UTC()
+	accountID := int64(42)
+	mock.ExpectExec("UPDATE proxies[\\s\\S]+pool_quality_account_id = \\$23").
+		WithArgs(
+			int64(9), int64(7), service.ProxyPoolHealthHealthy, 0, checkedAt,
+			"pass", nil, nil, "",
+			service.ProxyPoolQualityHealthy, 0, 0, 0, nil, float64(120),
+			int64(64), int64(2000), int64(250), "active", "quality observation recorded",
+			checkedAt, checkedAt, &accountID,
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	repo := NewProxyPoolRepository(db)
+	err = repo.UpdateProxyPoolHealth(context.Background(), 7, 9, service.ProxyPoolHealthSnapshot{
+		Health:              service.ProxyPoolHealthHealthy,
+		CheckedAt:           checkedAt,
+		GrokQualityStatus:   "pass",
+		QualityClass:        service.ProxyPoolQualityHealthy,
+		QualityOutputTPS:    120,
+		QualityOutputTokens: 64,
+		QualityDurationMs:   2000,
+		QualityFirstTokenMs: 250,
+		QualityLastSource:   "active",
+		QualityLastReason:   "quality observation recorded",
+		QualityObservedAt:   &checkedAt,
+		QualityProbedAt:     &checkedAt,
+		QualityAccountID:    &accountID,
+	})
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProxyPoolRepositoryListsQualityAccount(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	now := time.Now().UTC()
+	mock.ExpectQuery("SELECT p.id[\\s\\S]+quality_account.name[\\s\\S]+LEFT JOIN accounts quality_account").
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "protocol", "host", "port", "username", "password", "status",
+			"created_at", "updated_at", "pool_id", "pool_health", "pool_checked_at", "pool_failures",
+			"quality_class", "quality_strikes", "quality_thinking_strikes", "quality_error_strikes", "quarantined_until",
+			"quality_output_tps", "quality_output_tokens", "quality_duration_ms", "quality_first_token_ms",
+			"quality_last_source", "quality_last_reason", "quality_observed_at", "quality_probed_at",
+			"quality_account_id", "quality_account_name", "grok_quality_status", "grok_quality_checked_at",
+			"grok_quality_http_status", "grok_quality_message", "account_count",
+		}).AddRow(
+			int64(9), "exit", "http", "proxy.example", 8080, nil, nil, service.StatusActive,
+			now, now, int64(7), service.ProxyPoolHealthHealthy, now, 0,
+			service.ProxyPoolQualityHealthy, 0, 0, 0, nil,
+			float64(120), int64(64), int64(2000), int64(250),
+			"active", "quality observation recorded", now, now,
+			int64(42), "probe-account@example.com", "pass", now, 200, "", int64(3),
+		))
+
+	repo := NewProxyPoolRepository(db)
+	proxies, err := repo.ListPoolProxies(context.Background(), 7)
+
+	require.NoError(t, err)
+	require.Len(t, proxies, 1)
+	require.NotNil(t, proxies[0].QualityAccountID)
+	require.Equal(t, int64(42), *proxies[0].QualityAccountID)
+	require.Equal(t, "probe-account@example.com", proxies[0].QualityAccountName)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestProxyPoolRepositoryCreateTranslatesDuplicateName(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

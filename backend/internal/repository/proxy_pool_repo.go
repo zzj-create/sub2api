@@ -202,6 +202,7 @@ func (r *proxyPoolRepository) DeletePool(ctx context.Context, id int64) error {
 			pool_quality_duration_ms = 0, pool_quality_first_token_ms = 0,
 			pool_quality_last_source = NULL, pool_quality_last_reason = NULL,
 			pool_quality_observed_at = NULL, pool_quality_probed_at = NULL,
+			pool_quality_account_id = NULL,
 			updated_at = NOW()
 		WHERE pool_id = $1
 	`, id); err != nil {
@@ -638,12 +639,14 @@ func (r *proxyPoolRepository) ListPoolProxies(ctx context.Context, poolID int64)
 			p.pool_quality_duration_ms, p.pool_quality_first_token_ms,
 			p.pool_quality_last_source, p.pool_quality_last_reason,
 			p.pool_quality_observed_at, p.pool_quality_probed_at,
+			p.pool_quality_account_id, COALESCE(quality_account.name, ''),
 			p.pool_grok_quality_status, p.pool_grok_quality_checked_at,
 			p.pool_grok_quality_http_status, p.pool_grok_quality_message, COUNT(a.id)
 		FROM proxies p
 		LEFT JOIN accounts a ON a.proxy_id = p.id AND a.pool_id = $1 AND a.deleted_at IS NULL
+		LEFT JOIN accounts quality_account ON quality_account.id = p.pool_quality_account_id
 		WHERE p.pool_id = $1 AND p.deleted_at IS NULL
-		GROUP BY p.id
+		GROUP BY p.id, quality_account.name
 		ORDER BY p.id ASC
 	`, poolID)
 	if err != nil {
@@ -654,20 +657,21 @@ func (r *proxyPoolRepository) ListPoolProxies(ctx context.Context, poolID int64)
 	result := make([]service.ProxyPoolProxy, 0)
 	for rows.Next() {
 		var (
-			item          service.ProxyPoolProxy
-			username      sql.NullString
-			password      sql.NullString
-			checkedAt     sql.NullTime
-			quarantinedAt sql.NullTime
-			qualityTPS    sql.NullFloat64
-			qualityClass  sql.NullString
-			qualitySource sql.NullString
-			qualityReason sql.NullString
-			qualityAt     sql.NullTime
-			qualityProbed sql.NullTime
-			grokCheckedAt sql.NullTime
-			grokHTTP      sql.NullInt64
-			grokMessage   sql.NullString
+			item             service.ProxyPoolProxy
+			username         sql.NullString
+			password         sql.NullString
+			checkedAt        sql.NullTime
+			quarantinedAt    sql.NullTime
+			qualityTPS       sql.NullFloat64
+			qualityClass     sql.NullString
+			qualitySource    sql.NullString
+			qualityReason    sql.NullString
+			qualityAt        sql.NullTime
+			qualityProbed    sql.NullTime
+			qualityAccountID sql.NullInt64
+			grokCheckedAt    sql.NullTime
+			grokHTTP         sql.NullInt64
+			grokMessage      sql.NullString
 		)
 		if err := rows.Scan(
 			&item.ID, &item.Name, &item.Protocol, &item.Host, &item.Port,
@@ -677,6 +681,7 @@ func (r *proxyPoolRepository) ListPoolProxies(ctx context.Context, poolID int64)
 			&quarantinedAt, &qualityTPS, &item.QualityOutputTokens,
 			&item.QualityDurationMs, &item.QualityFirstTokenMs,
 			&qualitySource, &qualityReason, &qualityAt, &qualityProbed,
+			&qualityAccountID, &item.QualityAccountName,
 			&item.GrokQualityStatus, &grokCheckedAt, &grokHTTP, &grokMessage, &item.AccountCount,
 		); err != nil {
 			return nil, err
@@ -710,6 +715,9 @@ func (r *proxyPoolRepository) ListPoolProxies(ctx context.Context, poolID int64)
 		}
 		if qualityProbed.Valid {
 			item.QualityProbedAt = &qualityProbed.Time
+		}
+		if qualityAccountID.Valid {
+			item.QualityAccountID = &qualityAccountID.Int64
 		}
 		if grokCheckedAt.Valid {
 			item.GrokQualityCheckedAt = &grokCheckedAt.Time
@@ -765,7 +773,7 @@ func (r *proxyPoolRepository) AssignProxiesToPool(ctx context.Context, poolID in
 			pool_quality_output_tokens = 0, pool_quality_duration_ms = 0,
 			pool_quality_first_token_ms = 0, pool_quality_last_source = NULL,
 			pool_quality_last_reason = NULL, pool_quality_observed_at = NULL,
-			pool_quality_probed_at = NULL,
+			pool_quality_probed_at = NULL, pool_quality_account_id = NULL,
 			updated_at = NOW()
 		WHERE id = ANY($2) AND deleted_at IS NULL
 	`, poolID, pq.Array(proxyIDs))
@@ -825,7 +833,7 @@ func (r *proxyPoolRepository) RemoveProxiesFromPool(ctx context.Context, poolID 
 			pool_quality_output_tokens = 0, pool_quality_duration_ms = 0,
 			pool_quality_first_token_ms = 0, pool_quality_last_source = NULL,
 			pool_quality_last_reason = NULL, pool_quality_observed_at = NULL,
-			pool_quality_probed_at = NULL,
+			pool_quality_probed_at = NULL, pool_quality_account_id = NULL,
 			updated_at = NOW()
 		WHERE pool_id = $1 AND id = ANY($2) AND deleted_at IS NULL
 	`, poolID, pq.Array(proxyIDs))
@@ -854,7 +862,8 @@ func (r *proxyPoolRepository) UpdateProxyPoolHealth(ctx context.Context, poolID,
 	if snapshot.QualityClass == "" && snapshot.QualityStrikes == 0 && snapshot.QualityThinkingStrikes == 0 && snapshot.QualityErrorStrikes == 0 &&
 		snapshot.QuarantinedUntil == nil && snapshot.QualityOutputTPS == 0 && snapshot.QualityOutputTokens == 0 &&
 		snapshot.QualityDurationMs == 0 && snapshot.QualityFirstTokenMs == 0 && snapshot.QualityLastSource == "" &&
-		snapshot.QualityLastReason == "" && snapshot.QualityObservedAt == nil && snapshot.QualityProbedAt == nil {
+		snapshot.QualityLastReason == "" && snapshot.QualityObservedAt == nil && snapshot.QualityProbedAt == nil &&
+		snapshot.QualityAccountID == nil {
 		_, err := r.db.ExecContext(ctx, `
 			UPDATE proxies
 			SET pool_health = $3, pool_failures = $4, pool_checked_at = $5,
@@ -878,7 +887,7 @@ func (r *proxyPoolRepository) UpdateProxyPoolHealth(ctx context.Context, poolID,
 			pool_quality_output_tokens = $16, pool_quality_duration_ms = $17,
 			pool_quality_first_token_ms = $18, pool_quality_last_source = $19,
 			pool_quality_last_reason = $20, pool_quality_observed_at = $21,
-			pool_quality_probed_at = $22,
+			pool_quality_probed_at = $22, pool_quality_account_id = $23,
 			updated_at = NOW()
 		WHERE id = $1 AND pool_id = $2 AND deleted_at IS NULL
 	`, proxyID, poolID, snapshot.Health, snapshot.Failures, snapshot.CheckedAt,
@@ -888,7 +897,7 @@ func (r *proxyPoolRepository) UpdateProxyPoolHealth(ctx context.Context, poolID,
 		snapshot.QualityErrorStrikes, snapshot.QuarantinedUntil, snapshot.QualityOutputTPS,
 		snapshot.QualityOutputTokens, snapshot.QualityDurationMs, snapshot.QualityFirstTokenMs,
 		snapshot.QualityLastSource, snapshot.QualityLastReason, snapshot.QualityObservedAt,
-		snapshot.QualityProbedAt)
+		snapshot.QualityProbedAt, snapshot.QualityAccountID)
 	return err
 }
 

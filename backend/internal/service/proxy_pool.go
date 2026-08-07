@@ -113,6 +113,8 @@ type ProxyPoolProxy struct {
 	QualityLastReason      string     `json:"quality_last_reason,omitempty"`
 	QualityObservedAt      *time.Time `json:"quality_observed_at,omitempty"`
 	QualityProbedAt        *time.Time `json:"quality_probed_at,omitempty"`
+	QualityAccountID       *int64     `json:"quality_account_id,omitempty"`
+	QualityAccountName     string     `json:"quality_account_name,omitempty"`
 	GrokQualityStatus      string     `json:"grok_quality_status"`
 	GrokQualityCheckedAt   *time.Time `json:"grok_quality_checked_at,omitempty"`
 	GrokQualityHTTPStatus  *int       `json:"grok_quality_http_status,omitempty"`
@@ -163,6 +165,7 @@ type ProxyPoolHealthSnapshot struct {
 	QualityLastReason      string
 	QualityObservedAt      *time.Time
 	QualityProbedAt        *time.Time
+	QualityAccountID       *int64
 }
 
 type ProxyPoolRebindLog struct {

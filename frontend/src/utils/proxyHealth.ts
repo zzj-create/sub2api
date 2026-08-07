@@ -6,12 +6,13 @@ export type ProxyOperationalState = Exclude<ProxyHealthFilter, 'all'>
 const failedGrokStatuses = new Set(['warn', 'fail', 'failed', 'challenge'])
 
 export function getProxyPoolMemberState(
-  proxy: Pick<ProxyPoolProxy, 'status' | 'pool_health' | 'grok_quality_status'>
+  proxy: Pick<ProxyPoolProxy, 'status' | 'pool_health' | 'grok_quality_status' | 'quality_class' | 'quarantined_until'>
 ): ProxyOperationalState {
   if (
     proxy.status !== 'active' ||
     proxy.pool_health === 'unhealthy' ||
-    failedGrokStatuses.has(proxy.grok_quality_status)
+    failedGrokStatuses.has(proxy.grok_quality_status) ||
+    (proxy.quarantined_until != null && new Date(proxy.quarantined_until).getTime() > Date.now())
   ) {
     return 'invalid'
   }

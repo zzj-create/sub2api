@@ -217,7 +217,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	grokOAuthHandler := admin.NewGrokOAuthHandler(grokOAuthService, adminService, grokQuotaService, tokenRefreshService)
 	proxyHandler := admin.NewProxyHandler(adminService)
 	proxyPoolRepository := repository.NewProxyPoolRepository(db)
-	proxyPoolService := service.ProvideProxyPoolService(proxyPoolRepository, proxyExitInfoProber, proxyLatencyCache, redisClient, db)
+	proxyPoolService := service.ProvideProxyPoolService(proxyPoolRepository, proxyExitInfoProber, proxyLatencyCache, redisClient, db, accountRepository, grokTokenProvider, httpUpstream, configConfig, openAIGatewayService)
 	proxyPoolHandler := admin.NewProxyPoolHandler(proxyPoolService)
 	adminRedeemHandler := admin.NewRedeemHandler(adminService, redeemService)
 	promoHandler := admin.NewPromoHandler(promoService)

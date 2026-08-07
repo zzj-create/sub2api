@@ -14,6 +14,8 @@ describe('proxy health helpers', () => {
     expect(getProxyPoolMemberState({ status: 'active', pool_health: 'healthy', grok_quality_status: 'warn' })).toBe('invalid')
     expect(getProxyPoolMemberState({ status: 'active', pool_health: 'unhealthy', grok_quality_status: 'pass' })).toBe('invalid')
     expect(getProxyPoolMemberState({ status: 'inactive', pool_health: 'healthy', grok_quality_status: 'pass' })).toBe('invalid')
+    expect(getProxyPoolMemberState({ status: 'active', pool_health: 'healthy', grok_quality_status: 'pass', quality_class: 'error' })).toBe('healthy')
+    expect(getProxyPoolMemberState({ status: 'active', pool_health: 'healthy', grok_quality_status: 'pass', quarantined_until: '2999-01-01T00:00:00Z' })).toBe('invalid')
   })
 
   it('selects only known invalid proxies and leaves unchecked proxies pending', () => {

@@ -281,6 +281,8 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 	sseBody := strings.Join([]string{
 		`data: {"type":"response.created","response":{"id":"resp_bridge","model":"gpt-5"}}`,
 		"",
+		`data: {"type":"response.reasoning_summary_text.delta","response":{"id":"resp_bridge"},"delta":"plan"}`,
+		"",
 		`data: {"type":"response.output_text.delta","response":{"id":"resp_bridge"},"delta":"ok"}`,
 		"",
 		`data: {"type":"response.completed","response":{"id":"resp_bridge","model":"gpt-5","usage":{"input_tokens":3,"output_tokens":2}}}`,
@@ -376,10 +378,12 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 	}
 
 	created := readEvent()
+	reasoning := readEvent()
 	delta := readEvent()
 	completed := readEvent()
 
 	require.Equal(t, "response.created", gjson.GetBytes(created, "type").String())
+	require.Equal(t, "response.reasoning_summary_text.delta", gjson.GetBytes(reasoning, "type").String())
 	require.Equal(t, "response.output_text.delta", gjson.GetBytes(delta, "type").String())
 	require.Equal(t, "response.completed", gjson.GetBytes(completed, "type").String())
 
@@ -391,6 +395,7 @@ func TestOpenAIWSHTTPBridgeRelaysSSEFramesAsWebSocketMessages(t *testing.T) {
 		require.Equal(t, 3, bridge.result.Usage.InputTokens)
 		require.Equal(t, 2, bridge.result.Usage.OutputTokens)
 		require.True(t, bridge.result.OpenAIWSMode)
+		require.True(t, bridge.result.HasThinking)
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for bridge result")
 	}

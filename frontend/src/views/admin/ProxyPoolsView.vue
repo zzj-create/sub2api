@@ -60,7 +60,7 @@
       </template>
     </TablePageLayout>
 
-    <BaseDialog :show="showForm" :title="editingPool ? t('admin.proxyPools.edit') : t('admin.proxyPools.create')" width="normal" @close="showForm = false">
+    <BaseDialog :show="showForm" :title="editingPool ? t('admin.proxyPools.edit') : t('admin.proxyPools.create')" width="wide" @close="showForm = false">
       <form id="proxy-pool-form" class="space-y-5" @submit.prevent="savePool">
         <div>
           <label class="input-label">{{ t('admin.proxyPools.name') }}</label>
@@ -82,6 +82,85 @@
           <div>
             <label class="input-label">{{ t('admin.proxyPools.status') }}</label>
             <Select v-model="form.status" :options="statusOptions" />
+          </div>
+        </div>
+        <div class="border-t border-gray-200 pt-4 dark:border-dark-600">
+          <div class="mb-3 text-sm font-semibold text-gray-900 dark:text-white">{{ t('admin.proxyPools.qualityGuard') }}</div>
+          <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.qualityMode') }}</label>
+              <Select v-model="form.quality_mode" :options="qualityModeOptions" />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.activeInterval') }}</label>
+              <input v-model.number="form.active_interval_seconds" class="input" type="number" min="60" max="604800" required />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.passiveWindow') }}</label>
+              <input v-model.number="form.passive_window_seconds" class="input" type="number" min="1" max="86400" required />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.quarantineSeconds') }}</label>
+              <input v-model.number="form.quarantine_seconds" class="input" type="number" min="30" max="86400" required />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.softTps') }}</label>
+              <input v-model.number="form.soft_tps" class="input" type="number" min="1" max="1000000" required />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.hardTps') }}</label>
+              <input v-model.number="form.hard_tps" class="input" type="number" min="1" max="1000000" required />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.minHealthyProxies') }}</label>
+              <input v-model.number="form.min_healthy_proxies" class="input" type="number" min="1" max="1000" required />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.consecutiveSoft') }}</label>
+              <input v-model.number="form.consecutive_soft" class="input" type="number" min="1" max="50" required />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.consecutiveErrors') }}</label>
+              <input v-model.number="form.consecutive_errors" class="input" type="number" min="1" max="50" required />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.minGenerationMs') }}</label>
+              <input v-model.number="form.min_generation_ms" class="input" type="number" min="100" max="86400000" required />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.minOutputTokens') }}</label>
+              <input v-model.number="form.min_output_tokens" class="input" type="number" min="1" max="1000000" required />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.maxProbeTokens') }}</label>
+              <input v-model.number="form.max_output_tokens_probe" class="input" type="number" min="1" max="4096" required />
+            </div>
+            <div>
+              <label class="input-label">{{ t('admin.proxyPools.missingThinkingCount') }}</label>
+              <input v-model.number="form.consecutive_missing_thinking" class="input" type="number" min="1" max="50" required :disabled="!form.thinking_guard" />
+            </div>
+            <div class="sm:col-span-2">
+              <label class="input-label">{{ t('admin.proxyPools.qualityModel') }}</label>
+              <input v-model.trim="form.quality_model" class="input" maxlength="100" required />
+            </div>
+          </div>
+          <div class="mt-4 flex flex-wrap gap-x-6 gap-y-3">
+            <label class="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200">
+              <input v-model="form.thinking_guard" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" type="checkbox" />
+              <span>{{ t('admin.proxyPools.thinkingGuard') }}</span>
+            </label>
+            <label class="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200">
+              <input v-model="form.thinking_cross_verify" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" type="checkbox" :disabled="!form.thinking_guard" />
+              <span>{{ t('admin.proxyPools.thinkingCrossVerify') }}</span>
+            </label>
+            <label class="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200">
+              <input v-model="form.soft_cross_verify" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" type="checkbox" />
+              <span>{{ t('admin.proxyPools.softCrossVerify') }}</span>
+            </label>
+            <label class="flex items-center gap-3 text-sm text-gray-700 dark:text-gray-200">
+              <input v-model="form.disable_account_on_hard" class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500" type="checkbox" />
+              <span>{{ t('admin.proxyPools.disableAccountOnHard') }}</span>
+            </label>
           </div>
         </div>
         <label class="flex items-center gap-3 border-t border-gray-200 pt-4 dark:border-dark-600">
@@ -241,9 +320,18 @@
                 </td>
                 <td class="px-3 py-3"><div class="font-medium text-gray-900 dark:text-white">{{ proxy.name }}</div><code class="text-xs text-gray-500">{{ proxy.host }}:{{ proxy.port }}</code></td>
                 <td class="px-3 py-3"><span :class="healthClass(proxy.pool_health)">{{ healthLabel(proxy.pool_health) }}</span><div v-if="proxy.pool_failures" class="mt-1 text-xs text-red-500">{{ t('admin.proxyPools.failures', { count: proxy.pool_failures }) }}</div></td>
-                <td class="px-3 py-3" :title="proxy.grok_quality_message || undefined">
+                <td class="px-3 py-3" :title="proxy.quality_last_reason || proxy.grok_quality_message || undefined">
                   <span :class="grokQualityClass(proxy.grok_quality_status)">{{ grokQualityLabel(proxy.grok_quality_status) }}</span>
                   <div v-if="proxy.grok_quality_http_status" class="mt-1 text-xs text-gray-500">HTTP {{ proxy.grok_quality_http_status }}</div>
+                  <div v-if="proxy.quality_class && proxy.quality_class !== 'unknown'" class="mt-1 text-xs text-gray-500">
+                    {{ qualityLabel(proxy.quality_class) }}<span v-if="proxy.quality_output_tps"> / {{ Math.round(proxy.quality_output_tps) }} tok/s</span>
+                  </div>
+                  <div v-if="isActiveQualityQuarantine(proxy)" class="mt-1 text-xs font-medium text-red-600 dark:text-red-400">
+                    {{ t('admin.proxyPools.qualityQuarantinedUntil', { time: formatDateTime(proxy.quarantined_until!) }) }}
+                  </div>
+                  <div v-else-if="isAwaitingQualityRecovery(proxy)" class="mt-1 text-xs font-medium text-amber-600 dark:text-amber-400">
+                    {{ t('admin.proxyPools.qualityAwaitingRecovery') }}
+                  </div>
                 </td>
                 <td class="px-3 py-3"><div class="text-gray-700 dark:text-gray-200">{{ proxy.ip_address || '-' }}</div><div v-if="proxy.country" class="mt-0.5 text-xs text-gray-500">{{ proxy.country }}<span v-if="proxy.country_code"> ({{ proxy.country_code }})</span></div></td>
                 <td class="px-3 py-3 text-gray-600 dark:text-gray-300">{{ typeof proxy.latency_ms === 'number' ? `${proxy.latency_ms}ms` : '-' }}</td>
@@ -434,13 +522,25 @@ const statusOptions = computed(() => [
   { value: 'active', label: t('admin.proxyPools.active') },
   { value: 'disabled', label: t('admin.proxyPools.disabled') }
 ])
+const qualityModeOptions = computed(() => [
+  { value: 'hybrid', label: t('admin.proxyPools.qualityHybrid') },
+  { value: 'passive', label: t('admin.proxyPools.qualityPassive') },
+  { value: 'active', label: t('admin.proxyPools.qualityActive') }
+])
 const memberFilterOptions = computed(() => [
   { value: 'all', label: t('admin.proxyPools.filterAll') },
   { value: 'healthy', label: t('admin.proxyPools.filterHealthy') },
   { value: 'invalid', label: t('admin.proxyPools.filterInvalid') },
   { value: 'pending', label: t('admin.proxyPools.filterPending') }
 ])
-const form = reactive({ name: '', description: '', status: 'active', health_interval_seconds: 300, failure_threshold: 2, auto_rebind: true })
+const form = reactive({
+  name: '', description: '', status: 'active', health_interval_seconds: 300, failure_threshold: 2, auto_rebind: true,
+  quality_mode: 'hybrid' as 'passive' | 'active' | 'hybrid', active_interval_seconds: 1800, passive_window_seconds: 300,
+  quarantine_seconds: 120, soft_tps: 500, hard_tps: 1000, consecutive_soft: 2, consecutive_errors: 2,
+  min_healthy_proxies: 1, min_generation_ms: 1000, min_output_tokens: 32, quality_model: 'grok-4.5',
+  thinking_guard: true, consecutive_missing_thinking: 1, thinking_cross_verify: true, soft_cross_verify: true,
+  max_output_tokens_probe: 384, disable_account_on_hard: false
+})
 const healthyCount = computed(() => detailProxies.value.filter((proxy) => proxy.pool_health === 'healthy').length)
 const unhealthyCount = computed(() => detailProxies.value.filter((proxy) => proxy.pool_health === 'unhealthy').length)
 const boundAccounts = computed(() => detailProxies.value.reduce((sum, proxy) => sum + proxy.account_count, 0))
@@ -485,10 +585,64 @@ const allVisibleMembersSelected = computed(() => filteredDetailProxies.value.len
 const someVisibleMembersSelected = computed(() => visibleSelectedMemberCount.value > 0 && !allVisibleMembersSelected.value)
 
 async function loadPools() { loading.value = true; try { pools.value = await adminAPI.proxyPools.list() } catch { appStore.showError(t('admin.proxyPools.loadFailed')) } finally { loading.value = false } }
-function resetForm() { Object.assign(form, { name: '', description: '', status: 'active', health_interval_seconds: 300, failure_threshold: 2, auto_rebind: true }) }
+function resetForm() {
+  Object.assign(form, {
+    name: '', description: '', status: 'active', health_interval_seconds: 300, failure_threshold: 2, auto_rebind: true,
+    quality_mode: 'hybrid', active_interval_seconds: 1800, passive_window_seconds: 300, quarantine_seconds: 120,
+    soft_tps: 500, hard_tps: 1000, consecutive_soft: 2, consecutive_errors: 2, min_healthy_proxies: 1,
+    min_generation_ms: 1000, min_output_tokens: 32, quality_model: 'grok-4.5', thinking_guard: true,
+    consecutive_missing_thinking: 1, thinking_cross_verify: true, soft_cross_verify: true, max_output_tokens_probe: 384,
+    disable_account_on_hard: false
+  })
+}
 function openCreate() { editingPool.value = null; resetForm(); showForm.value = true }
-function openEdit(pool: ProxyPoolWithStats) { editingPool.value = pool; Object.assign(form, { name: pool.name, description: pool.description || '', status: pool.status, health_interval_seconds: pool.health_interval_seconds, failure_threshold: pool.failure_threshold, auto_rebind: pool.auto_rebind }); showForm.value = true }
-async function savePool() { saving.value = true; try { const payload = { ...form, status: form.status as 'active' | 'disabled' }; if (editingPool.value) await adminAPI.proxyPools.update(editingPool.value.id, payload); else await adminAPI.proxyPools.create(payload); showForm.value = false; appStore.showSuccess(t('admin.proxyPools.saved')); await loadPools() } catch { appStore.showError(t('admin.proxyPools.saveFailed')) } finally { saving.value = false } }
+function openEdit(pool: ProxyPoolWithStats) {
+  editingPool.value = pool
+  Object.assign(form, {
+    name: pool.name, description: pool.description || '', status: pool.status, health_interval_seconds: pool.health_interval_seconds,
+    failure_threshold: pool.failure_threshold, auto_rebind: pool.auto_rebind, quality_mode: pool.quality_mode || 'hybrid',
+    active_interval_seconds: pool.active_interval_seconds || 1800, passive_window_seconds: pool.passive_window_seconds || 300,
+    quarantine_seconds: pool.quarantine_seconds || 120, soft_tps: pool.soft_tps || 500, hard_tps: pool.hard_tps || 1000,
+    consecutive_soft: pool.consecutive_soft || 2, consecutive_errors: pool.consecutive_errors || 2,
+    min_healthy_proxies: pool.min_healthy_proxies || 1, min_generation_ms: pool.min_generation_ms || 1000,
+    min_output_tokens: pool.min_output_tokens || 32, quality_model: pool.quality_model || 'grok-4.5',
+    thinking_guard: pool.thinking_guard !== false, consecutive_missing_thinking: pool.consecutive_missing_thinking || 1,
+    thinking_cross_verify: pool.thinking_cross_verify !== false, soft_cross_verify: pool.soft_cross_verify !== false,
+    max_output_tokens_probe: pool.max_output_tokens_probe || 384, disable_account_on_hard: pool.disable_account_on_hard === true
+  })
+  showForm.value = true
+}
+async function savePool() {
+  if (form.soft_tps >= form.hard_tps) {
+    appStore.showError(t('admin.proxyPools.qualityThresholdInvalid'))
+    return
+  }
+  saving.value = true
+  try {
+    const {
+      quality_mode, active_interval_seconds, passive_window_seconds, quarantine_seconds, soft_tps, hard_tps,
+      consecutive_soft, consecutive_errors, min_healthy_proxies, min_generation_ms, min_output_tokens, quality_model,
+      thinking_guard, consecutive_missing_thinking, thinking_cross_verify, soft_cross_verify, max_output_tokens_probe,
+      disable_account_on_hard,
+      ...base
+    } = form
+    const payload = {
+      ...base,
+      status: form.status as 'active' | 'disabled',
+      quality_policy: {
+        quality_mode, active_interval_seconds, passive_window_seconds, quarantine_seconds, soft_tps, hard_tps,
+        consecutive_soft, consecutive_errors, min_healthy_proxies, min_generation_ms, min_output_tokens, quality_model,
+        thinking_guard, consecutive_missing_thinking, thinking_cross_verify, soft_cross_verify, max_output_tokens_probe,
+        disable_account_on_hard
+      }
+    }
+    if (editingPool.value) await adminAPI.proxyPools.update(editingPool.value.id, payload)
+    else await adminAPI.proxyPools.create(payload)
+    showForm.value = false
+    appStore.showSuccess(t('admin.proxyPools.saved'))
+    await loadPools()
+  } catch { appStore.showError(t('admin.proxyPools.saveFailed')) } finally { saving.value = false }
+}
 async function deletePool() { if (!deletingPool.value) return; try { await adminAPI.proxyPools.remove(deletingPool.value.id); deletingPool.value = null; appStore.showSuccess(t('admin.proxyPools.deleted')); await loadPools() } catch { appStore.showError(t('admin.proxyPools.deleteFailed')) } }
 async function openDetail(pool: ProxyPoolWithStats) {
   memberSearch.value = ''
@@ -643,6 +797,16 @@ function grokQualityLabel(status: string) {
   if (status === 'challenge') return t('admin.proxyPools.grokQualityChallenge')
   if (status === 'fail') return t('admin.proxyPools.grokQualityFailed')
   return t('admin.proxyPools.grokQualityPending')
+}
+function qualityLabel(status: string) {
+  const key = `admin.proxyPools.qualityClass${status.charAt(0).toUpperCase()}${status.slice(1)}`
+  return t(key)
+}
+function isActiveQualityQuarantine(proxy: ProxyPoolProxy) {
+  return !!proxy.quarantined_until && new Date(proxy.quarantined_until).getTime() > Date.now()
+}
+function isAwaitingQualityRecovery(proxy: ProxyPoolProxy) {
+  return !!proxy.quarantined_until && proxy.pool_health === 'unhealthy' && (proxy.quality_class === 'hard' || proxy.quality_class === 'error')
 }
 
 onMounted(loadPools)

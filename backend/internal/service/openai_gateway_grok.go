@@ -177,6 +177,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 
 	var usage *OpenAIUsage
 	var firstTokenMs *int
+	hasThinking := false
 	responseID := ""
 	if reqStream {
 		maxLineSize := defaultMaxLineSize
@@ -193,6 +194,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		}
 		usage = streamResult.usage
 		firstTokenMs = streamResult.firstTokenMs
+		hasThinking = streamResult.hasThinking
 		responseID = strings.TrimSpace(streamResult.responseID)
 	} else {
 		nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
@@ -200,6 +202,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			return nil, err
 		}
 		usage = nonStreamResult.usage
+		hasThinking = nonStreamResult.hasThinking
 		responseID = strings.TrimSpace(nonStreamResult.responseID)
 	}
 
@@ -219,6 +222,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		ResponseHeaders: resp.Header.Clone(),
 		Duration:        time.Since(startTime),
 		FirstTokenMs:    firstTokenMs,
+		HasThinking:     hasThinking,
 	}, nil
 }
 

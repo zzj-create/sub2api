@@ -907,6 +907,24 @@ export interface ProxyPool {
   health_interval_seconds: number
   failure_threshold: number
   auto_rebind: boolean
+  quality_mode: 'passive' | 'active' | 'hybrid'
+  active_interval_seconds: number
+  passive_window_seconds: number
+  quarantine_seconds: number
+  soft_tps: number
+  hard_tps: number
+  consecutive_soft: number
+  consecutive_errors: number
+  min_healthy_proxies: number
+  min_generation_ms: number
+  min_output_tokens: number
+  quality_model: string
+  disable_account_on_hard: boolean
+  thinking_guard: boolean
+  consecutive_missing_thinking: number
+  thinking_cross_verify: boolean
+  soft_cross_verify: boolean
+  max_output_tokens_probe: number
   created_at: string
   updated_at: string
 }
@@ -944,6 +962,19 @@ export interface ProxyPoolProxy extends Proxy {
   pool_health: 'unknown' | 'healthy' | 'unhealthy'
   pool_checked_at?: string | null
   pool_failures: number
+  quality_class?: 'unknown' | 'healthy' | 'ignored' | 'soft' | 'hard' | 'error'
+  quality_strikes?: number
+  quality_thinking_strikes?: number
+  quality_error_strikes?: number
+  quarantined_until?: string | null
+  quality_output_tps?: number
+  quality_output_tokens?: number
+  quality_duration_ms?: number
+  quality_first_token_ms?: number
+  quality_last_source?: string
+  quality_last_reason?: string
+  quality_observed_at?: string | null
+  quality_probed_at?: string | null
   grok_quality_status: 'unknown' | 'pass' | 'warn' | 'fail' | 'challenge'
   grok_quality_checked_at?: string | null
   grok_quality_http_status?: number | null

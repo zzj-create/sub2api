@@ -31,16 +31,17 @@ var (
 )
 
 type ProxyPool struct {
-	ID                    int64      `json:"id"`
-	Name                  string     `json:"name"`
-	Description           *string    `json:"description,omitempty"`
-	Status                string     `json:"status"`
-	HealthIntervalSeconds int        `json:"health_interval_seconds"`
-	FailureThreshold      int        `json:"failure_threshold"`
-	AutoRebind            bool       `json:"auto_rebind"`
-	CreatedAt             time.Time  `json:"created_at"`
-	UpdatedAt             time.Time  `json:"updated_at"`
-	DeletedAt             *time.Time `json:"deleted_at,omitempty"`
+	ID                    int64   `json:"id"`
+	Name                  string  `json:"name"`
+	Description           *string `json:"description,omitempty"`
+	Status                string  `json:"status"`
+	HealthIntervalSeconds int     `json:"health_interval_seconds"`
+	FailureThreshold      int     `json:"failure_threshold"`
+	AutoRebind            bool    `json:"auto_rebind"`
+	ProxyPoolQualityPolicy
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 }
 
 func (p *ProxyPool) IsActive() bool {
@@ -95,29 +96,73 @@ type ProxyPoolGroupUnbindResult struct {
 
 type ProxyPoolProxy struct {
 	Proxy
-	PoolID                int64      `json:"pool_id"`
-	PoolHealth            string     `json:"pool_health"`
-	PoolCheckedAt         *time.Time `json:"pool_checked_at,omitempty"`
-	PoolFailures          int        `json:"pool_failures"`
-	GrokQualityStatus     string     `json:"grok_quality_status"`
-	GrokQualityCheckedAt  *time.Time `json:"grok_quality_checked_at,omitempty"`
-	GrokQualityHTTPStatus *int       `json:"grok_quality_http_status,omitempty"`
-	GrokQualityMessage    string     `json:"grok_quality_message,omitempty"`
-	AccountCount          int64      `json:"account_count"`
-	LatencyMs             *int64     `json:"latency_ms,omitempty"`
-	IPAddress             string     `json:"ip_address,omitempty"`
-	Country               string     `json:"country,omitempty"`
-	CountryCode           string     `json:"country_code,omitempty"`
+	PoolID                 int64      `json:"pool_id"`
+	PoolHealth             string     `json:"pool_health"`
+	PoolCheckedAt          *time.Time `json:"pool_checked_at,omitempty"`
+	PoolFailures           int        `json:"pool_failures"`
+	QualityClass           string     `json:"quality_class"`
+	QualityStrikes         int        `json:"quality_strikes"`
+	QualityThinkingStrikes int        `json:"quality_thinking_strikes"`
+	QualityErrorStrikes    int        `json:"quality_error_strikes"`
+	QuarantinedUntil       *time.Time `json:"quarantined_until,omitempty"`
+	QualityOutputTPS       float64    `json:"quality_output_tps,omitempty"`
+	QualityOutputTokens    int64      `json:"quality_output_tokens,omitempty"`
+	QualityDurationMs      int64      `json:"quality_duration_ms,omitempty"`
+	QualityFirstTokenMs    int64      `json:"quality_first_token_ms,omitempty"`
+	QualityLastSource      string     `json:"quality_last_source,omitempty"`
+	QualityLastReason      string     `json:"quality_last_reason,omitempty"`
+	QualityObservedAt      *time.Time `json:"quality_observed_at,omitempty"`
+	QualityProbedAt        *time.Time `json:"quality_probed_at,omitempty"`
+	GrokQualityStatus      string     `json:"grok_quality_status"`
+	GrokQualityCheckedAt   *time.Time `json:"grok_quality_checked_at,omitempty"`
+	GrokQualityHTTPStatus  *int       `json:"grok_quality_http_status,omitempty"`
+	GrokQualityMessage     string     `json:"grok_quality_message,omitempty"`
+	AccountCount           int64      `json:"account_count"`
+	LatencyMs              *int64     `json:"latency_ms,omitempty"`
+	IPAddress              string     `json:"ip_address,omitempty"`
+	Country                string     `json:"country,omitempty"`
+	CountryCode            string     `json:"country_code,omitempty"`
+}
+
+// ProxyPoolQualityObservation is the normalized result produced by the
+// active Grok model probe or by a successful request observed on the hot path.
+// ErrorKind deliberately distinguishes credential/quota failures from proxy
+// transport failures so an expired account cannot quarantine a healthy exit.
+type ProxyPoolQualityObservation struct {
+	Classification string  `json:"classification"`
+	OutputTPS      float64 `json:"output_tps,omitempty"`
+	OutputTokens   int64   `json:"output_tokens,omitempty"`
+	DurationMs     int64   `json:"duration_ms,omitempty"`
+	FirstTokenMs   int64   `json:"first_token_ms,omitempty"`
+	HasThinking    bool    `json:"has_thinking,omitempty"`
+	Source         string  `json:"source,omitempty"`
+	Reason         string  `json:"reason,omitempty"`
+	ErrorKind      string  `json:"error_kind,omitempty"`
+	HTTPStatus     int     `json:"http_status,omitempty"`
+	AccountID      int64   `json:"account_id,omitempty"`
 }
 
 type ProxyPoolHealthSnapshot struct {
-	Health                string
-	Failures              int
-	CheckedAt             time.Time
-	GrokQualityStatus     string
-	GrokQualityCheckedAt  *time.Time
-	GrokQualityHTTPStatus *int
-	GrokQualityMessage    string
+	Health                 string
+	Failures               int
+	CheckedAt              time.Time
+	GrokQualityStatus      string
+	GrokQualityCheckedAt   *time.Time
+	GrokQualityHTTPStatus  *int
+	GrokQualityMessage     string
+	QualityClass           string
+	QualityStrikes         int
+	QualityThinkingStrikes int
+	QualityErrorStrikes    int
+	QuarantinedUntil       *time.Time
+	QualityOutputTPS       float64
+	QualityOutputTokens    int64
+	QualityDurationMs      int64
+	QualityFirstTokenMs    int64
+	QualityLastSource      string
+	QualityLastReason      string
+	QualityObservedAt      *time.Time
+	QualityProbedAt        *time.Time
 }
 
 type ProxyPoolRebindLog struct {
@@ -151,6 +196,7 @@ type CreateProxyPoolInput struct {
 	HealthIntervalSeconds int
 	FailureThreshold      int
 	AutoRebind            bool
+	QualityPolicy         *ProxyPoolQualityPolicyPatch
 }
 
 type UpdateProxyPoolInput struct {
@@ -160,6 +206,7 @@ type UpdateProxyPoolInput struct {
 	HealthIntervalSeconds *int
 	FailureThreshold      *int
 	AutoRebind            *bool
+	QualityPolicy         *ProxyPoolQualityPolicyPatch
 }
 
 type ProxyPoolRepository interface {
@@ -189,4 +236,31 @@ type ProxyPoolRepository interface {
 
 	RecordRebindLog(ctx context.Context, entry *ProxyPoolRebindLog) error
 	ListRebindLogs(ctx context.Context, poolID int64, limit int) ([]ProxyPoolRebindLog, error)
+}
+
+// ProxyPoolQualityRepository contains optional quality-guard queries. It is
+// intentionally separate from ProxyPoolRepository so lightweight test doubles
+// and deployments that have not enabled the additive migration keep working;
+// the production SQL repository implements it.
+type ProxyPoolQualityRepository interface {
+	GetPoolIDByProxyID(ctx context.Context, proxyID int64) (int64, error)
+	ListGrokProbeAccountIDs(ctx context.Context, poolID, preferredProxyID int64, limit int) ([]int64, error)
+}
+
+// ProxyPoolQualityProber actively sends a real Grok generation through one
+// selected proxy. Implementations must never mutate account credentials.
+type ProxyPoolQualityProber interface {
+	ProbeProxyQuality(ctx context.Context, pool *ProxyPool, proxy *ProxyPoolProxy, policy ProxyPoolQualityPolicy) ProxyPoolQualityObservation
+}
+
+// ProxyPoolQualityObserver is used by the gateway to feed successful Grok
+// responses back to the pool guard without coupling billing to pool storage.
+type ProxyPoolQualityObserver interface {
+	ObserveGrokResponse(ctx context.Context, account *Account, result *OpenAIForwardResult)
+}
+
+// ProxyPoolAccountStateRepository is the narrow account-state dependency used
+// when a quarantined exit cannot migrate all of its accounts.
+type ProxyPoolAccountStateRepository interface {
+	SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error
 }

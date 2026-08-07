@@ -37,6 +37,24 @@ func scanProxyPool(row proxyPoolRowScanner) (*service.ProxyPool, error) {
 		&pool.HealthIntervalSeconds,
 		&pool.FailureThreshold,
 		&pool.AutoRebind,
+		&pool.Mode,
+		&pool.ActiveIntervalSeconds,
+		&pool.PassiveWindowSeconds,
+		&pool.QuarantineSeconds,
+		&pool.SoftTPS,
+		&pool.HardTPS,
+		&pool.ConsecutiveSoft,
+		&pool.ConsecutiveErrors,
+		&pool.MinHealthyProxies,
+		&pool.MinGenerationMs,
+		&pool.MinOutputTokens,
+		&pool.Model,
+		&pool.DisableAccountOnHard,
+		&pool.ThinkingGuard,
+		&pool.ConsecutiveMissingThinking,
+		&pool.ThinkingCrossVerify,
+		&pool.SoftCrossVerify,
+		&pool.MaxOutputTokensProbe,
 		&pool.CreatedAt,
 		&pool.UpdatedAt,
 		&deletedAt,
@@ -49,13 +67,45 @@ func scanProxyPool(row proxyPoolRowScanner) (*service.ProxyPool, error) {
 	if deletedAt.Valid {
 		pool.DeletedAt = &deletedAt.Time
 	}
+	pool.ProxyPoolQualityPolicy.Normalize()
 	return &pool, nil
 }
 
 const proxyPoolColumns = `
-	id, name, description, status, health_interval_seconds,
-	failure_threshold, auto_rebind, created_at, updated_at, deleted_at
+id, name, description, status, health_interval_seconds,
+	failure_threshold, auto_rebind,
+	quality_mode, active_interval_seconds, passive_window_seconds,
+	quarantine_seconds, soft_tps, hard_tps, consecutive_soft,
+	consecutive_errors, min_healthy_proxies, min_generation_ms,
+	min_output_tokens, quality_model, disable_account_on_hard,
+	thinking_guard, consecutive_missing_thinking, thinking_cross_verify,
+	soft_cross_verify, max_output_tokens_probe,
+	created_at, updated_at, deleted_at
 `
+
+func qualityPolicyArgs(policy service.ProxyPoolQualityPolicy) []any {
+	policy.Normalize()
+	return []any{
+		policy.Mode,
+		policy.ActiveIntervalSeconds,
+		policy.PassiveWindowSeconds,
+		policy.QuarantineSeconds,
+		policy.SoftTPS,
+		policy.HardTPS,
+		policy.ConsecutiveSoft,
+		policy.ConsecutiveErrors,
+		policy.MinHealthyProxies,
+		policy.MinGenerationMs,
+		policy.MinOutputTokens,
+		policy.Model,
+		policy.DisableAccountOnHard,
+		policy.ThinkingGuard,
+		policy.ConsecutiveMissingThinking,
+		policy.ThinkingCrossVerify,
+		policy.SoftCrossVerify,
+		policy.MaxOutputTokensProbe,
+	}
+}
 
 func (r *proxyPoolRepository) CreatePool(ctx context.Context, pool *service.ProxyPool) (*service.ProxyPool, error) {
 	if r == nil || r.db == nil || pool == nil {
@@ -63,10 +113,18 @@ func (r *proxyPoolRepository) CreatePool(ctx context.Context, pool *service.Prox
 	}
 	row := r.db.QueryRowContext(ctx, `
 		INSERT INTO proxy_pools (
-			name, description, status, health_interval_seconds, failure_threshold, auto_rebind
-		) VALUES ($1, $2, $3, $4, $5, $6)
+			name, description, status, health_interval_seconds, failure_threshold, auto_rebind,
+			quality_mode, active_interval_seconds, passive_window_seconds,
+			quarantine_seconds, soft_tps, hard_tps, consecutive_soft,
+			consecutive_errors, min_healthy_proxies, min_generation_ms,
+			min_output_tokens, quality_model, disable_account_on_hard,
+			thinking_guard, consecutive_missing_thinking, thinking_cross_verify,
+			soft_cross_verify, max_output_tokens_probe
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
 		RETURNING `+proxyPoolColumns,
-		pool.Name, pool.Description, pool.Status, pool.HealthIntervalSeconds, pool.FailureThreshold, pool.AutoRebind,
+		append([]any{
+			pool.Name, pool.Description, pool.Status, pool.HealthIntervalSeconds, pool.FailureThreshold, pool.AutoRebind,
+		}, qualityPolicyArgs(pool.ProxyPoolQualityPolicy)...)...,
 	)
 	created, err := scanProxyPool(row)
 	if err != nil {
@@ -83,9 +141,18 @@ func (r *proxyPoolRepository) UpdatePool(ctx context.Context, pool *service.Prox
 		UPDATE proxy_pools
 		SET name = $2, description = $3, status = $4,
 			health_interval_seconds = $5, failure_threshold = $6,
-			auto_rebind = $7, updated_at = NOW()
+			auto_rebind = $7, quality_mode = $8,
+			active_interval_seconds = $9, passive_window_seconds = $10,
+			quarantine_seconds = $11, soft_tps = $12, hard_tps = $13,
+			consecutive_soft = $14, consecutive_errors = $15,
+			min_healthy_proxies = $16, min_generation_ms = $17,
+			min_output_tokens = $18, quality_model = $19,
+			disable_account_on_hard = $20, thinking_guard = $21,
+			consecutive_missing_thinking = $22, thinking_cross_verify = $23,
+			soft_cross_verify = $24, max_output_tokens_probe = $25,
+			updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL
-	`, pool.ID, pool.Name, pool.Description, pool.Status, pool.HealthIntervalSeconds, pool.FailureThreshold, pool.AutoRebind)
+	`, append([]any{pool.ID, pool.Name, pool.Description, pool.Status, pool.HealthIntervalSeconds, pool.FailureThreshold, pool.AutoRebind}, qualityPolicyArgs(pool.ProxyPoolQualityPolicy)...)...)
 	if err != nil {
 		return translatePersistenceError(err, nil, service.ErrProxyPoolNameExists)
 	}
@@ -128,6 +195,13 @@ func (r *proxyPoolRepository) DeletePool(ctx context.Context, id int64) error {
 		SET pool_id = NULL, pool_health = 'unknown', pool_checked_at = NULL, pool_failures = 0,
 			pool_grok_quality_status = 'unknown', pool_grok_quality_checked_at = NULL,
 			pool_grok_quality_http_status = NULL, pool_grok_quality_message = NULL,
+			pool_quality_class = 'unknown', pool_quality_strikes = 0,
+			pool_quality_thinking_strikes = 0, pool_quality_error_strikes = 0,
+			pool_quarantined_until = NULL,
+			pool_quality_output_tps = 0, pool_quality_output_tokens = 0,
+			pool_quality_duration_ms = 0, pool_quality_first_token_ms = 0,
+			pool_quality_last_source = NULL, pool_quality_last_reason = NULL,
+			pool_quality_observed_at = NULL, pool_quality_probed_at = NULL,
 			updated_at = NOW()
 		WHERE pool_id = $1
 	`, id); err != nil {
@@ -193,7 +267,14 @@ func (r *proxyPoolRepository) ListPools(ctx context.Context) ([]service.ProxyPoo
 func (r *proxyPoolRepository) ListPoolsWithStats(ctx context.Context) ([]service.ProxyPoolWithStats, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT pp.id, pp.name, pp.description, pp.status, pp.health_interval_seconds,
-			pp.failure_threshold, pp.auto_rebind, pp.created_at, pp.updated_at, pp.deleted_at,
+			pp.failure_threshold, pp.auto_rebind,
+			pp.quality_mode, pp.active_interval_seconds, pp.passive_window_seconds,
+			pp.quarantine_seconds, pp.soft_tps, pp.hard_tps, pp.consecutive_soft,
+			pp.consecutive_errors, pp.min_healthy_proxies, pp.min_generation_ms,
+			pp.min_output_tokens, pp.quality_model, pp.disable_account_on_hard,
+			pp.thinking_guard, pp.consecutive_missing_thinking, pp.thinking_cross_verify,
+			pp.soft_cross_verify, pp.max_output_tokens_probe,
+			pp.created_at, pp.updated_at, pp.deleted_at,
 			COALESCE(ps.proxy_count, 0), COALESCE(ps.healthy_count, 0),
 			COALESCE(ps.unhealthy_count, 0), COALESCE(ac.bound_account_count, 0),
 			COALESCE(gc.bound_group_count, 0)
@@ -203,10 +284,12 @@ func (r *proxyPoolRepository) ListPoolsWithStats(ctx context.Context) ([]service
 				COUNT(*) FILTER (
 					WHERE p.pool_health = 'healthy' AND p.status = 'active'
 						AND p.pool_grok_quality_status = 'pass'
+						AND (p.pool_quarantined_until IS NULL OR p.pool_quarantined_until <= NOW())
 				) AS healthy_count,
 				COUNT(*) FILTER (
 					WHERE p.pool_health = 'unhealthy' OR p.status <> 'active'
 						OR p.pool_grok_quality_status NOT IN ('pass', 'unknown')
+						OR p.pool_quarantined_until > NOW()
 				) AS unhealthy_count
 			FROM proxies p
 			WHERE p.pool_id = pp.id AND p.deleted_at IS NULL
@@ -240,6 +323,12 @@ func (r *proxyPoolRepository) ListPoolsWithStats(ctx context.Context) ([]service
 		if err := rows.Scan(
 			&item.ID, &item.Name, &description, &item.Status,
 			&item.HealthIntervalSeconds, &item.FailureThreshold, &item.AutoRebind,
+			&item.Mode, &item.ActiveIntervalSeconds, &item.PassiveWindowSeconds,
+			&item.QuarantineSeconds, &item.SoftTPS, &item.HardTPS, &item.ConsecutiveSoft,
+			&item.ConsecutiveErrors, &item.MinHealthyProxies, &item.MinGenerationMs,
+			&item.MinOutputTokens, &item.Model, &item.DisableAccountOnHard,
+			&item.ThinkingGuard, &item.ConsecutiveMissingThinking, &item.ThinkingCrossVerify,
+			&item.SoftCrossVerify, &item.MaxOutputTokensProbe,
 			&item.CreatedAt, &item.UpdatedAt, &deletedAt,
 			&item.ProxyCount, &item.HealthyProxyCount, &item.UnhealthyProxyCount, &item.BoundAccountCount,
 			&item.BoundGroupCount,
@@ -252,6 +341,7 @@ func (r *proxyPoolRepository) ListPoolsWithStats(ctx context.Context) ([]service
 		if deletedAt.Valid {
 			item.DeletedAt = &deletedAt.Time
 		}
+		item.ProxyPoolQualityPolicy.Normalize()
 		result = append(result, item)
 	}
 	return result, rows.Err()
@@ -542,7 +632,13 @@ func (r *proxyPoolRepository) ListPoolProxies(ctx context.Context, poolID int64)
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT p.id, p.name, p.protocol, p.host, p.port, p.username, p.password, p.status,
 			p.created_at, p.updated_at, p.pool_id, p.pool_health, p.pool_checked_at,
-			p.pool_failures, p.pool_grok_quality_status, p.pool_grok_quality_checked_at,
+			p.pool_failures, p.pool_quality_class, p.pool_quality_strikes,
+			p.pool_quality_thinking_strikes, p.pool_quality_error_strikes, p.pool_quarantined_until,
+			p.pool_quality_output_tps, p.pool_quality_output_tokens,
+			p.pool_quality_duration_ms, p.pool_quality_first_token_ms,
+			p.pool_quality_last_source, p.pool_quality_last_reason,
+			p.pool_quality_observed_at, p.pool_quality_probed_at,
+			p.pool_grok_quality_status, p.pool_grok_quality_checked_at,
 			p.pool_grok_quality_http_status, p.pool_grok_quality_message, COUNT(a.id)
 		FROM proxies p
 		LEFT JOIN accounts a ON a.proxy_id = p.id AND a.pool_id = $1 AND a.deleted_at IS NULL
@@ -562,6 +658,13 @@ func (r *proxyPoolRepository) ListPoolProxies(ctx context.Context, poolID int64)
 			username      sql.NullString
 			password      sql.NullString
 			checkedAt     sql.NullTime
+			quarantinedAt sql.NullTime
+			qualityTPS    sql.NullFloat64
+			qualityClass  sql.NullString
+			qualitySource sql.NullString
+			qualityReason sql.NullString
+			qualityAt     sql.NullTime
+			qualityProbed sql.NullTime
 			grokCheckedAt sql.NullTime
 			grokHTTP      sql.NullInt64
 			grokMessage   sql.NullString
@@ -570,6 +673,10 @@ func (r *proxyPoolRepository) ListPoolProxies(ctx context.Context, poolID int64)
 			&item.ID, &item.Name, &item.Protocol, &item.Host, &item.Port,
 			&username, &password, &item.Status, &item.CreatedAt, &item.UpdatedAt,
 			&item.PoolID, &item.PoolHealth, &checkedAt, &item.PoolFailures,
+			&qualityClass, &item.QualityStrikes, &item.QualityThinkingStrikes, &item.QualityErrorStrikes,
+			&quarantinedAt, &qualityTPS, &item.QualityOutputTokens,
+			&item.QualityDurationMs, &item.QualityFirstTokenMs,
+			&qualitySource, &qualityReason, &qualityAt, &qualityProbed,
 			&item.GrokQualityStatus, &grokCheckedAt, &grokHTTP, &grokMessage, &item.AccountCount,
 		); err != nil {
 			return nil, err
@@ -582,6 +689,27 @@ func (r *proxyPoolRepository) ListPoolProxies(ctx context.Context, poolID int64)
 		}
 		if checkedAt.Valid {
 			item.PoolCheckedAt = &checkedAt.Time
+		}
+		if qualityClass.Valid {
+			item.QualityClass = qualityClass.String
+		}
+		if quarantinedAt.Valid {
+			item.QuarantinedUntil = &quarantinedAt.Time
+		}
+		if qualityTPS.Valid {
+			item.QualityOutputTPS = qualityTPS.Float64
+		}
+		if qualitySource.Valid {
+			item.QualityLastSource = qualitySource.String
+		}
+		if qualityReason.Valid {
+			item.QualityLastReason = qualityReason.String
+		}
+		if qualityAt.Valid {
+			item.QualityObservedAt = &qualityAt.Time
+		}
+		if qualityProbed.Valid {
+			item.QualityProbedAt = &qualityProbed.Time
 		}
 		if grokCheckedAt.Valid {
 			item.GrokQualityCheckedAt = &grokCheckedAt.Time
@@ -630,7 +758,15 @@ func (r *proxyPoolRepository) AssignProxiesToPool(ctx context.Context, poolID in
 		SET pool_id = $1, pool_health = 'unknown', pool_checked_at = NULL,
 			pool_failures = 0, pool_grok_quality_status = 'unknown',
 			pool_grok_quality_checked_at = NULL, pool_grok_quality_http_status = NULL,
-			pool_grok_quality_message = NULL, updated_at = NOW()
+			pool_grok_quality_message = NULL, pool_quality_class = 'unknown',
+			pool_quality_strikes = 0, pool_quality_thinking_strikes = 0,
+			pool_quality_error_strikes = 0,
+			pool_quarantined_until = NULL, pool_quality_output_tps = 0,
+			pool_quality_output_tokens = 0, pool_quality_duration_ms = 0,
+			pool_quality_first_token_ms = 0, pool_quality_last_source = NULL,
+			pool_quality_last_reason = NULL, pool_quality_observed_at = NULL,
+			pool_quality_probed_at = NULL,
+			updated_at = NOW()
 		WHERE id = ANY($2) AND deleted_at IS NULL
 	`, poolID, pq.Array(proxyIDs))
 	if err != nil {
@@ -682,7 +818,15 @@ func (r *proxyPoolRepository) RemoveProxiesFromPool(ctx context.Context, poolID 
 		SET pool_id = NULL, pool_health = 'unknown', pool_checked_at = NULL,
 			pool_failures = 0, pool_grok_quality_status = 'unknown',
 			pool_grok_quality_checked_at = NULL, pool_grok_quality_http_status = NULL,
-			pool_grok_quality_message = NULL, updated_at = NOW()
+			pool_grok_quality_message = NULL, pool_quality_class = 'unknown',
+			pool_quality_strikes = 0, pool_quality_thinking_strikes = 0,
+			pool_quality_error_strikes = 0,
+			pool_quarantined_until = NULL, pool_quality_output_tps = 0,
+			pool_quality_output_tokens = 0, pool_quality_duration_ms = 0,
+			pool_quality_first_token_ms = 0, pool_quality_last_source = NULL,
+			pool_quality_last_reason = NULL, pool_quality_observed_at = NULL,
+			pool_quality_probed_at = NULL,
+			updated_at = NOW()
 		WHERE pool_id = $1 AND id = ANY($2) AND deleted_at IS NULL
 	`, poolID, pq.Array(proxyIDs))
 	if err != nil {
@@ -707,17 +851,95 @@ func (r *proxyPoolRepository) RemoveProxiesFromPool(ctx context.Context, poolID 
 }
 
 func (r *proxyPoolRepository) UpdateProxyPoolHealth(ctx context.Context, poolID, proxyID int64, snapshot service.ProxyPoolHealthSnapshot) error {
+	if snapshot.QualityClass == "" && snapshot.QualityStrikes == 0 && snapshot.QualityThinkingStrikes == 0 && snapshot.QualityErrorStrikes == 0 &&
+		snapshot.QuarantinedUntil == nil && snapshot.QualityOutputTPS == 0 && snapshot.QualityOutputTokens == 0 &&
+		snapshot.QualityDurationMs == 0 && snapshot.QualityFirstTokenMs == 0 && snapshot.QualityLastSource == "" &&
+		snapshot.QualityLastReason == "" && snapshot.QualityObservedAt == nil && snapshot.QualityProbedAt == nil {
+		_, err := r.db.ExecContext(ctx, `
+			UPDATE proxies
+			SET pool_health = $3, pool_failures = $4, pool_checked_at = $5,
+				pool_grok_quality_status = $6, pool_grok_quality_checked_at = $7,
+				pool_grok_quality_http_status = $8, pool_grok_quality_message = $9,
+				updated_at = NOW()
+			WHERE id = $1 AND pool_id = $2 AND deleted_at IS NULL
+		`, proxyID, poolID, snapshot.Health, snapshot.Failures, snapshot.CheckedAt,
+			snapshot.GrokQualityStatus, snapshot.GrokQualityCheckedAt,
+			snapshot.GrokQualityHTTPStatus, snapshot.GrokQualityMessage)
+		return err
+	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE proxies
 		SET pool_health = $3, pool_failures = $4, pool_checked_at = $5,
 			pool_grok_quality_status = $6, pool_grok_quality_checked_at = $7,
 			pool_grok_quality_http_status = $8, pool_grok_quality_message = $9,
+			pool_quality_class = $10, pool_quality_strikes = $11,
+			pool_quality_thinking_strikes = $12, pool_quality_error_strikes = $13,
+			pool_quarantined_until = $14, pool_quality_output_tps = $15,
+			pool_quality_output_tokens = $16, pool_quality_duration_ms = $17,
+			pool_quality_first_token_ms = $18, pool_quality_last_source = $19,
+			pool_quality_last_reason = $20, pool_quality_observed_at = $21,
+			pool_quality_probed_at = $22,
 			updated_at = NOW()
 		WHERE id = $1 AND pool_id = $2 AND deleted_at IS NULL
 	`, proxyID, poolID, snapshot.Health, snapshot.Failures, snapshot.CheckedAt,
 		snapshot.GrokQualityStatus, snapshot.GrokQualityCheckedAt,
-		snapshot.GrokQualityHTTPStatus, snapshot.GrokQualityMessage)
+		snapshot.GrokQualityHTTPStatus, snapshot.GrokQualityMessage,
+		snapshot.QualityClass, snapshot.QualityStrikes, snapshot.QualityThinkingStrikes,
+		snapshot.QualityErrorStrikes, snapshot.QuarantinedUntil, snapshot.QualityOutputTPS,
+		snapshot.QualityOutputTokens, snapshot.QualityDurationMs, snapshot.QualityFirstTokenMs,
+		snapshot.QualityLastSource, snapshot.QualityLastReason, snapshot.QualityObservedAt,
+		snapshot.QualityProbedAt)
 	return err
+}
+
+// GetPoolIDByProxyID resolves the pool that currently owns an exit. It is kept
+// as a narrow query so passive observations do not need to load proxy secrets.
+func (r *proxyPoolRepository) GetPoolIDByProxyID(ctx context.Context, proxyID int64) (int64, error) {
+	if r == nil || r.db == nil || proxyID <= 0 {
+		return 0, errors.New("proxy pool repository unavailable")
+	}
+	var poolID sql.NullInt64
+	err := r.db.QueryRowContext(ctx, `
+		SELECT pool_id FROM proxies
+		WHERE id = $1 AND deleted_at IS NULL AND pool_id IS NOT NULL
+	`, proxyID).Scan(&poolID)
+	if errors.Is(err, sql.ErrNoRows) || !poolID.Valid {
+		return 0, service.ErrProxyPoolNotFound
+	}
+	return poolID.Int64, err
+}
+
+// ListGrokProbeAccountIDs returns a bounded set of credentials that can be
+// used to test one pool exit. Prefer accounts already assigned to that exit,
+// then fall back to other active accounts in the same pool. Credential errors
+// are handled by the probe and must not affect the proxy state.
+func (r *proxyPoolRepository) ListGrokProbeAccountIDs(ctx context.Context, poolID, preferredProxyID int64, limit int) ([]int64, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("proxy pool repository unavailable")
+	}
+	if limit <= 0 || limit > 32 {
+		limit = 8
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT a.id
+		FROM accounts a
+		WHERE a.pool_id = $1
+			AND a.deleted_at IS NULL
+			AND a.status = 'active'
+			AND a.platform = $2
+			AND a.type IN ('oauth', 'apikey')
+			AND a.schedulable = TRUE
+			AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
+			AND (a.rate_limit_reset_at IS NULL OR a.rate_limit_reset_at <= NOW())
+		ORDER BY CASE WHEN a.proxy_id = $3 THEN 0 ELSE 1 END,
+			         a.last_used_at NULLS FIRST, a.id ASC
+		LIMIT $4
+	`, poolID, service.PlatformGrok, preferredProxyID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanInt64Rows(rows)
 }
 
 func (r *proxyPoolRepository) ListPoolUnassignedAccountIDs(ctx context.Context, poolID int64) ([]int64, error) {
@@ -817,6 +1039,7 @@ func (r *proxyPoolRepository) BindAccountsToPool(ctx context.Context, poolID int
 					WHERE p.id = $2 AND p.pool_id = $1 AND p.deleted_at IS NULL
 						AND p.status = 'active' AND p.pool_health = 'healthy'
 						AND p.pool_grok_quality_status = 'pass'
+						AND (p.pool_quarantined_until IS NULL OR p.pool_quarantined_until <= NOW())
 				)
 			RETURNING a.id
 		`, poolID, proxyID, pq.Array(grouped[proxyID]))

@@ -23,6 +23,8 @@ type proxyPoolServiceTestRepo struct {
 	boundGroups   []int64
 	unboundGroups []int64
 	groupSyncs    int64
+	groupSynced   bool
+	bindErr       error
 	healthUpdates []proxyPoolHealthUpdate
 	logs          []ProxyPoolRebindLog
 }
@@ -106,6 +108,7 @@ func (r *proxyPoolServiceTestRepo) UnbindGroupsFromPool(_ context.Context, _ int
 func (r *proxyPoolServiceTestRepo) SyncPoolGroupAccounts(_ context.Context, _ int64) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.groupSynced = true
 	return r.groupSyncs, nil
 }
 
@@ -168,6 +171,19 @@ func (r *proxyPoolServiceTestRepo) UpdateProxyPoolHealth(_ context.Context, pool
 	proxy.GrokQualityCheckedAt = snapshot.GrokQualityCheckedAt
 	proxy.GrokQualityHTTPStatus = snapshot.GrokQualityHTTPStatus
 	proxy.GrokQualityMessage = snapshot.GrokQualityMessage
+	proxy.QualityClass = snapshot.QualityClass
+	proxy.QualityStrikes = snapshot.QualityStrikes
+	proxy.QualityThinkingStrikes = snapshot.QualityThinkingStrikes
+	proxy.QualityErrorStrikes = snapshot.QualityErrorStrikes
+	proxy.QuarantinedUntil = snapshot.QuarantinedUntil
+	proxy.QualityOutputTPS = snapshot.QualityOutputTPS
+	proxy.QualityOutputTokens = snapshot.QualityOutputTokens
+	proxy.QualityDurationMs = snapshot.QualityDurationMs
+	proxy.QualityFirstTokenMs = snapshot.QualityFirstTokenMs
+	proxy.QualityLastSource = snapshot.QualityLastSource
+	proxy.QualityLastReason = snapshot.QualityLastReason
+	proxy.QualityObservedAt = snapshot.QualityObservedAt
+	proxy.QualityProbedAt = snapshot.QualityProbedAt
 	r.proxies[proxyID] = proxy
 	r.healthUpdates = append(r.healthUpdates, proxyPoolHealthUpdate{
 		proxyID: proxyID, health: snapshot.Health, failures: snapshot.Failures, grokStatus: snapshot.GrokQualityStatus,
@@ -205,6 +221,9 @@ func (r *proxyPoolServiceTestRepo) CountAccountsByProxyIDs(_ context.Context, pr
 func (r *proxyPoolServiceTestRepo) BindAccountsToPool(_ context.Context, _ int64, assignments []ProxyPoolAccountAssignment) ([]ProxyPoolAccountAssignment, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.bindErr != nil {
+		return nil, r.bindErr
+	}
 	for _, assignment := range assignments {
 		if previous, ok := r.accountProxy[assignment.AccountID]; ok && r.counts[previous] > 0 {
 			r.counts[previous]--

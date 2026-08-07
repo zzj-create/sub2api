@@ -18,21 +18,23 @@ func NewProxyPoolHandler(poolService *service.ProxyPoolService) *ProxyPoolHandle
 }
 
 type createProxyPoolRequest struct {
-	Name                  string  `json:"name" binding:"required,max=100"`
-	Description           *string `json:"description"`
-	Status                string  `json:"status" binding:"omitempty,oneof=active disabled"`
-	HealthIntervalSeconds int     `json:"health_interval_seconds" binding:"omitempty,min=30,max=86400"`
-	FailureThreshold      int     `json:"failure_threshold" binding:"omitempty,min=1,max=10"`
-	AutoRebind            *bool   `json:"auto_rebind"`
+	Name                  string                               `json:"name" binding:"required,max=100"`
+	Description           *string                              `json:"description"`
+	Status                string                               `json:"status" binding:"omitempty,oneof=active disabled"`
+	HealthIntervalSeconds int                                  `json:"health_interval_seconds" binding:"omitempty,min=30,max=86400"`
+	FailureThreshold      int                                  `json:"failure_threshold" binding:"omitempty,min=1,max=10"`
+	AutoRebind            *bool                                `json:"auto_rebind"`
+	QualityPolicy         *service.ProxyPoolQualityPolicyPatch `json:"quality_policy"`
 }
 
 type updateProxyPoolRequest struct {
-	Name                  *string `json:"name" binding:"omitempty,max=100"`
-	Description           *string `json:"description"`
-	Status                *string `json:"status" binding:"omitempty,oneof=active disabled"`
-	HealthIntervalSeconds *int    `json:"health_interval_seconds" binding:"omitempty,min=30,max=86400"`
-	FailureThreshold      *int    `json:"failure_threshold" binding:"omitempty,min=1,max=10"`
-	AutoRebind            *bool   `json:"auto_rebind"`
+	Name                  *string                              `json:"name" binding:"omitempty,max=100"`
+	Description           *string                              `json:"description"`
+	Status                *string                              `json:"status" binding:"omitempty,oneof=active disabled"`
+	HealthIntervalSeconds *int                                 `json:"health_interval_seconds" binding:"omitempty,min=30,max=86400"`
+	FailureThreshold      *int                                 `json:"failure_threshold" binding:"omitempty,min=1,max=10"`
+	AutoRebind            *bool                                `json:"auto_rebind"`
+	QualityPolicy         *service.ProxyPoolQualityPolicyPatch `json:"quality_policy"`
 }
 
 type proxyPoolIDsRequest struct {
@@ -95,6 +97,7 @@ func (h *ProxyPoolHandler) Create(c *gin.Context) {
 		HealthIntervalSeconds: req.HealthIntervalSeconds,
 		FailureThreshold:      req.FailureThreshold,
 		AutoRebind:            autoRebind,
+		QualityPolicy:         req.QualityPolicy,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -120,6 +123,7 @@ func (h *ProxyPoolHandler) Update(c *gin.Context) {
 		HealthIntervalSeconds: req.HealthIntervalSeconds,
 		FailureThreshold:      req.FailureThreshold,
 		AutoRebind:            req.AutoRebind,
+		QualityPolicy:         req.QualityPolicy,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

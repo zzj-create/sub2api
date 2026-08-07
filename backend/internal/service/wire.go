@@ -333,8 +333,26 @@ func ProvideProxyExpiryService(proxyRepo ProxyRepository) *ProxyExpiryService {
 }
 
 // ProvideProxyPoolService starts proxy health checks and automatic account failover.
-func ProvideProxyPoolService(repo ProxyPoolRepository, prober ProxyExitInfoProber, latencyCache ProxyLatencyCache, rdb *redis.Client, db *sql.DB) *ProxyPoolService {
+func ProvideProxyPoolService(
+	repo ProxyPoolRepository,
+	prober ProxyExitInfoProber,
+	latencyCache ProxyLatencyCache,
+	rdb *redis.Client,
+	db *sql.DB,
+	accountRepo AccountRepository,
+	grokTokenProvider *GrokTokenProvider,
+	httpUpstream HTTPUpstream,
+	cfg *config.Config,
+	openAIGateway *OpenAIGatewayService,
+) *ProxyPoolService {
 	svc := NewProxyPoolService(repo, prober, latencyCache, rdb, db)
+	svc.SetAccountStateRepository(accountRepo)
+	if qualityRepo, ok := repo.(ProxyPoolQualityRepository); ok {
+		svc.SetQualityProber(NewGrokEgressQualityProber(accountRepo, qualityRepo, grokTokenProvider, httpUpstream, cfg))
+	}
+	if openAIGateway != nil {
+		openAIGateway.SetProxyPoolQualityObserver(svc)
+	}
 	svc.Start()
 	return svc
 }

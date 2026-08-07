@@ -260,6 +260,7 @@ type OpenAIForwardResult struct {
 	ResponseHeaders       http.Header
 	Duration              time.Duration
 	FirstTokenMs          *int
+	HasThinking           bool
 	ClientDisconnect      bool
 	ImageCount            int
 	ImageSize             string
@@ -396,33 +397,34 @@ var ErrNoAvailableCompactAccounts = errors.New("no available accounts support /r
 
 // OpenAIGatewayService handles OpenAI API gateway operations
 type OpenAIGatewayService struct {
-	accountRepo           AccountRepository
-	usageLogRepo          UsageLogRepository
-	usageBillingRepo      UsageBillingRepository
-	userRepo              UserRepository
-	userSubRepo           UserSubscriptionRepository
-	cache                 GatewayCache
-	cfg                   *config.Config
-	codexDetector         CodexClientRestrictionDetector
-	schedulerSnapshot     *SchedulerSnapshotService
-	concurrencyService    *ConcurrencyService
-	billingService        *BillingService
-	rateLimitService      *RateLimitService
-	billingCacheService   *BillingCacheService
-	userGroupRateResolver *userGroupRateResolver
-	httpUpstream          HTTPUpstream
-	deferredService       *DeferredService
-	openAITokenProvider   *OpenAITokenProvider
-	grokTokenProvider     *GrokTokenProvider
-	toolCorrector         *CodexToolCorrector
-	openaiWSResolver      OpenAIWSProtocolResolver
-	resolver              *ModelPricingResolver
-	channelService        *ChannelService
-	balanceNotifyService  *BalanceNotifyService
-	settingService        *SettingService
-	userPlatformQuotaRepo UserPlatformQuotaRepository
-	liveAttestation       liveattestation.Provider
-	liveAttestationCipher SecretEncryptor
+	accountRepo              AccountRepository
+	usageLogRepo             UsageLogRepository
+	usageBillingRepo         UsageBillingRepository
+	userRepo                 UserRepository
+	userSubRepo              UserSubscriptionRepository
+	cache                    GatewayCache
+	cfg                      *config.Config
+	codexDetector            CodexClientRestrictionDetector
+	schedulerSnapshot        *SchedulerSnapshotService
+	concurrencyService       *ConcurrencyService
+	billingService           *BillingService
+	rateLimitService         *RateLimitService
+	billingCacheService      *BillingCacheService
+	userGroupRateResolver    *userGroupRateResolver
+	httpUpstream             HTTPUpstream
+	deferredService          *DeferredService
+	openAITokenProvider      *OpenAITokenProvider
+	grokTokenProvider        *GrokTokenProvider
+	proxyPoolQualityObserver ProxyPoolQualityObserver
+	toolCorrector            *CodexToolCorrector
+	openaiWSResolver         OpenAIWSProtocolResolver
+	resolver                 *ModelPricingResolver
+	channelService           *ChannelService
+	balanceNotifyService     *BalanceNotifyService
+	settingService           *SettingService
+	userPlatformQuotaRepo    UserPlatformQuotaRepository
+	liveAttestation          liveattestation.Provider
+	liveAttestationCipher    SecretEncryptor
 
 	openaiWSPoolOnce               sync.Once
 	openaiWSStateStoreOnce         sync.Once
@@ -634,6 +636,16 @@ func (s *OpenAIGatewayService) billingDeps() *billingDeps {
 		balanceNotifyService:  s.balanceNotifyService,
 		userPlatformQuotaRepo: s.userPlatformQuotaRepo,
 	}
+}
+
+// SetProxyPoolQualityObserver attaches the best-effort passive Grok egress
+// observer. It is a setter to avoid a constructor cycle between the gateway
+// and the proxy-pool scheduler.
+func (s *OpenAIGatewayService) SetProxyPoolQualityObserver(observer ProxyPoolQualityObserver) {
+	if s == nil {
+		return
+	}
+	s.proxyPoolQualityObserver = observer
 }
 
 // CloseOpenAIWSPool 关闭 OpenAI WebSocket 连接池的后台 worker 和空闲连接。

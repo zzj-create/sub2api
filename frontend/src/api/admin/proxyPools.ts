@@ -10,6 +10,27 @@ import type {
   ProxyPoolGroupUnbindResult
 } from '@/types'
 
+export type ProxyPoolQualityPolicyInput = Partial<{
+  quality_mode: ProxyPool['quality_mode']
+  active_interval_seconds: number
+  passive_window_seconds: number
+  quarantine_seconds: number
+  soft_tps: number
+  hard_tps: number
+  consecutive_soft: number
+  consecutive_errors: number
+  min_healthy_proxies: number
+  min_generation_ms: number
+  min_output_tokens: number
+  quality_model: string
+  disable_account_on_hard: boolean
+  thinking_guard: boolean
+  consecutive_missing_thinking: number
+  thinking_cross_verify: boolean
+  soft_cross_verify: boolean
+  max_output_tokens_probe: number
+}>
+
 export async function list(): Promise<ProxyPoolWithStats[]> {
   const { data } = await apiClient.get<ProxyPoolWithStats[]>('/admin/proxy-pools')
   return data
@@ -27,6 +48,7 @@ export async function create(input: {
   health_interval_seconds?: number
   failure_threshold?: number
   auto_rebind?: boolean
+  quality_policy?: ProxyPoolQualityPolicyInput
 }): Promise<ProxyPool> {
   const { data } = await apiClient.post<ProxyPool>('/admin/proxy-pools', input)
   return data
@@ -39,6 +61,7 @@ export async function update(id: number, input: Partial<{
   health_interval_seconds: number
   failure_threshold: number
   auto_rebind: boolean
+  quality_policy: ProxyPoolQualityPolicyInput
 }>): Promise<ProxyPool> {
   const { data } = await apiClient.put<ProxyPool>(`/admin/proxy-pools/${id}`, input)
   return data

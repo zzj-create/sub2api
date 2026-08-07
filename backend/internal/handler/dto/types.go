@@ -389,19 +389,32 @@ type AdminProxyWithAccountCount struct {
 // It deliberately uses the non-admin Proxy DTO so credentials are never exposed.
 type ProxyPoolProxy struct {
 	Proxy
-	PoolID                int64      `json:"pool_id"`
-	PoolHealth            string     `json:"pool_health"`
-	PoolCheckedAt         *time.Time `json:"pool_checked_at,omitempty"`
-	PoolFailures          int        `json:"pool_failures"`
-	GrokQualityStatus     string     `json:"grok_quality_status"`
-	GrokQualityCheckedAt  *time.Time `json:"grok_quality_checked_at,omitempty"`
-	GrokQualityHTTPStatus *int       `json:"grok_quality_http_status,omitempty"`
-	GrokQualityMessage    string     `json:"grok_quality_message,omitempty"`
-	AccountCount          int64      `json:"account_count"`
-	LatencyMs             *int64     `json:"latency_ms,omitempty"`
-	IPAddress             string     `json:"ip_address,omitempty"`
-	Country               string     `json:"country,omitempty"`
-	CountryCode           string     `json:"country_code,omitempty"`
+	PoolID                 int64      `json:"pool_id"`
+	PoolHealth             string     `json:"pool_health"`
+	PoolCheckedAt          *time.Time `json:"pool_checked_at,omitempty"`
+	PoolFailures           int        `json:"pool_failures"`
+	QualityClass           string     `json:"quality_class"`
+	QualityStrikes         int        `json:"quality_strikes"`
+	QualityThinkingStrikes int        `json:"quality_thinking_strikes"`
+	QualityErrorStrikes    int        `json:"quality_error_strikes"`
+	QuarantinedUntil       *time.Time `json:"quarantined_until,omitempty"`
+	QualityOutputTPS       float64    `json:"quality_output_tps,omitempty"`
+	QualityOutputTokens    int64      `json:"quality_output_tokens,omitempty"`
+	QualityDurationMs      int64      `json:"quality_duration_ms,omitempty"`
+	QualityFirstTokenMs    int64      `json:"quality_first_token_ms,omitempty"`
+	QualityLastSource      string     `json:"quality_last_source,omitempty"`
+	QualityLastReason      string     `json:"quality_last_reason,omitempty"`
+	QualityObservedAt      *time.Time `json:"quality_observed_at,omitempty"`
+	QualityProbedAt        *time.Time `json:"quality_probed_at,omitempty"`
+	GrokQualityStatus      string     `json:"grok_quality_status"`
+	GrokQualityCheckedAt   *time.Time `json:"grok_quality_checked_at,omitempty"`
+	GrokQualityHTTPStatus  *int       `json:"grok_quality_http_status,omitempty"`
+	GrokQualityMessage     string     `json:"grok_quality_message,omitempty"`
+	AccountCount           int64      `json:"account_count"`
+	LatencyMs              *int64     `json:"latency_ms,omitempty"`
+	IPAddress              string     `json:"ip_address,omitempty"`
+	Country                string     `json:"country,omitempty"`
+	CountryCode            string     `json:"country_code,omitempty"`
 }
 
 type ProxyAccountSummary struct {

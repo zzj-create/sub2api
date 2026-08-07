@@ -17,21 +17,23 @@ import (
 // The failover loop only changes accounts.proxy_id, so existing request paths
 // immediately use the replacement without a gateway code change.
 type ProxyPoolService struct {
-	repo         ProxyPoolRepository
-	prober       ProxyExitInfoProber
-	grokProber   ProxyGrokQualityProber
-	qualityRepo  ProxyPoolQualityRepository
-	qualityProbe ProxyPoolQualityProber
-	accountState ProxyPoolAccountStateRepository
-	latencyCache ProxyLatencyCache
-	rdb          *redis.Client
-	db           *sql.DB
-	interval     time.Duration
-	stopCh       chan struct{}
-	stopOnce     sync.Once
-	wg           sync.WaitGroup
-	poolRuns     sync.Map
-	bindRuns     sync.Map
+	repo                 ProxyPoolRepository
+	prober               ProxyExitInfoProber
+	grokProber           ProxyGrokQualityProber
+	qualityRepo          ProxyPoolQualityRepository
+	accountQualityRepo   ProxyPoolAccountQualityRepository
+	qualityProbe         ProxyPoolQualityProber
+	accountState         ProxyPoolAccountStateRepository
+	latencyCache         ProxyLatencyCache
+	rdb                  *redis.Client
+	db                   *sql.DB
+	interval             time.Duration
+	stopCh               chan struct{}
+	stopOnce             sync.Once
+	wg                   sync.WaitGroup
+	poolRuns             sync.Map
+	bindRuns             sync.Map
+	accountQualityWrites sync.Map
 }
 
 const (
@@ -55,17 +57,37 @@ const (
 func NewProxyPoolService(repo ProxyPoolRepository, prober ProxyExitInfoProber, latencyCache ProxyLatencyCache, rdb *redis.Client, db *sql.DB) *ProxyPoolService {
 	grokProber, _ := prober.(ProxyGrokQualityProber)
 	qualityRepo, _ := repo.(ProxyPoolQualityRepository)
+	accountQualityRepo, _ := repo.(ProxyPoolAccountQualityRepository)
 	return &ProxyPoolService{
-		repo:         repo,
-		prober:       prober,
-		grokProber:   grokProber,
-		qualityRepo:  qualityRepo,
-		latencyCache: latencyCache,
-		rdb:          rdb,
-		db:           db,
-		interval:     proxyPoolSweepInterval,
-		stopCh:       make(chan struct{}),
+		repo:               repo,
+		prober:             prober,
+		grokProber:         grokProber,
+		qualityRepo:        qualityRepo,
+		accountQualityRepo: accountQualityRepo,
+		latencyCache:       latencyCache,
+		rdb:                rdb,
+		db:                 db,
+		interval:           proxyPoolSweepInterval,
+		stopCh:             make(chan struct{}),
 	}
+}
+
+// SetAccountQualityRepository is primarily useful for deployments that wire
+// the pool service with a decorated repository, and for focused tests.
+func (s *ProxyPoolService) SetAccountQualityRepository(repo ProxyPoolAccountQualityRepository) {
+	if s == nil {
+		return
+	}
+	s.accountQualityRepo = repo
+}
+
+// ListAccountQualitySnapshots exposes the read-only account quality view to
+// admin handlers without leaking the SQL repository implementation.
+func (s *ProxyPoolService) ListAccountQualitySnapshots(ctx context.Context, accountIDs []int64) (map[int64]*ProxyPoolAccountQualitySnapshot, error) {
+	if s == nil || s.accountQualityRepo == nil || len(accountIDs) == 0 {
+		return map[int64]*ProxyPoolAccountQualitySnapshot{}, nil
+	}
+	return s.accountQualityRepo.ListAccountQualitySnapshots(ctx, accountIDs)
 }
 
 // SetQualityProber attaches the real-model Grok egress probe after the

@@ -1181,6 +1181,25 @@ export interface OllamaCloudUsageSettings {
   debounce_minutes: number
 }
 
+export interface GrokAccountQualitySnapshot {
+  account_id: number
+  pool_id: number
+  pool_name?: string
+  proxy_id: number
+  proxy_name?: string
+  quality_class: 'healthy' | 'soft' | 'hard' | 'error' | 'ignored' | 'unknown' | string
+  output_tps: number
+  output_tokens: number
+  duration_ms: number
+  first_token_ms: number
+  has_thinking?: boolean | null
+  source: 'active' | 'passive' | string
+  reason?: string
+  error_kind?: string
+  http_status?: number | null
+  observed_at: string
+}
+
 export interface Account {
   id: number
   name: string
@@ -1229,6 +1248,8 @@ export interface Account {
   created_at: string
   updated_at: string
   proxy?: Proxy
+  /** Latest Grok quality observation produced with this account. */
+  grok_quality?: GrokAccountQualitySnapshot | null
   group_ids?: number[] // Groups this account belongs to
   groups?: Group[] // Preloaded group objects
 

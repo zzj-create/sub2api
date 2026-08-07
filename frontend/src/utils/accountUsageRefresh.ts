@@ -27,3 +27,29 @@ export const buildOpenAIUsageRefreshKey = (account: Pick<Account, 'id' | 'platfo
     extra.codex_7d_window_minutes
   ].map(normalizeUsageRefreshValue).join('|')
 }
+
+export const buildGrokQualityRefreshKey = (account: Pick<Account, 'platform' | 'grok_quality'>): string => {
+  if (account.platform !== 'grok' || !account.grok_quality) {
+    return ''
+  }
+
+  const quality = account.grok_quality
+  return [
+    quality.account_id,
+    quality.pool_id,
+    quality.pool_name,
+    quality.proxy_id,
+    quality.proxy_name,
+    quality.quality_class,
+    quality.output_tps,
+    quality.output_tokens,
+    quality.duration_ms,
+    quality.first_token_ms,
+    quality.has_thinking,
+    quality.source,
+    quality.reason,
+    quality.error_kind,
+    quality.http_status,
+    quality.observed_at
+  ].map(normalizeUsageRefreshValue).join('|')
+}

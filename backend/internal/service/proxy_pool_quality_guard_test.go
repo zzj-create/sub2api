@@ -323,6 +323,10 @@ func TestProxyPoolQualityObservationTracksAndClearsProbeAccount(t *testing.T) {
 	})
 	require.NotNil(t, repo.proxies[2].QualityAccountID)
 	require.Equal(t, int64(99), *repo.proxies[2].QualityAccountID)
+	require.Contains(t, repo.qualitySnapshots, int64(99))
+	require.Equal(t, ProxyPoolQualityIgnored, repo.qualitySnapshots[99].QualityClass)
+	require.Equal(t, int64(2), repo.qualitySnapshots[99].ProxyID)
+	require.Equal(t, "probe quota exhausted", repo.qualitySnapshots[99].Reason)
 
 	applyQualityTestObservation(t, svc, repo, pool, 2, ProxyPoolQualityObservation{
 		Classification: ProxyPoolQualityIgnored,
@@ -331,6 +335,38 @@ func TestProxyPoolQualityObservationTracksAndClearsProbeAccount(t *testing.T) {
 		Reason:         "no schedulable Grok account is available for this pool",
 	})
 	require.Nil(t, repo.proxies[2].QualityAccountID)
+}
+
+func TestProxyPoolQualityObservationPersistsAccountTPS(t *testing.T) {
+	pool := qualityGuardTestPool()
+	repo := newProxyPoolServiceTestRepo(pool,
+		qualityGuardTestProxy(1, pool.ID, ProxyPoolHealthHealthy),
+		qualityGuardTestProxy(2, pool.ID, ProxyPoolHealthHealthy),
+	)
+	svc := NewProxyPoolService(repo, nil, nil, nil, nil)
+
+	applyQualityTestObservation(t, svc, repo, pool, 2, ProxyPoolQualityObservation{
+		Classification: ProxyPoolQualityHealthy,
+		OutputTPS:      125.75,
+		OutputTokens:   64,
+		DurationMs:     2000,
+		FirstTokenMs:   250,
+		HasThinking:    true,
+		Source:         "active",
+		AccountID:      42,
+		Reason:         "quality observation recorded",
+	})
+
+	snapshot, ok := repo.qualitySnapshots[42]
+	require.True(t, ok)
+	require.InDelta(t, 125.75, snapshot.OutputTPS, 0.001)
+	require.Equal(t, int64(64), snapshot.OutputTokens)
+	require.Equal(t, int64(2000), snapshot.DurationMs)
+	require.Equal(t, int64(250), snapshot.FirstTokenMs)
+	require.Equal(t, int64(2), snapshot.ProxyID)
+	require.Equal(t, ProxyPoolQualityHealthy, snapshot.QualityClass)
+	require.NotNil(t, snapshot.HasThinking)
+	require.True(t, *snapshot.HasThinking)
 }
 
 func TestProxyPoolQualityTransportErrorsQuarantineAfterConsecutiveHits(t *testing.T) {

@@ -64,6 +64,7 @@ type AccountHandler struct {
 	grokImportProber        grokImportProber
 	upstreamBillingProbe    *service.UpstreamBillingProbeService
 	ollamaCloudUsage        *service.OllamaCloudUsageService
+	accountQualityReader    service.ProxyPoolAccountQualityReader
 }
 
 // SetUpstreamBillingProbeService attaches the optional remote billing probe service.
@@ -73,6 +74,16 @@ func (h *AccountHandler) SetUpstreamBillingProbeService(probe *service.UpstreamB
 
 func (h *AccountHandler) SetOllamaCloudUsageService(usage *service.OllamaCloudUsageService) {
 	h.ollamaCloudUsage = usage
+}
+
+// SetAccountQualityReader attaches the optional proxy-pool account quality
+// view. Keeping it as a setter preserves the lightweight account handler
+// constructor used by existing tests and installations without proxy pools.
+func (h *AccountHandler) SetAccountQualityReader(reader service.ProxyPoolAccountQualityReader) {
+	if h == nil {
+		return
+	}
+	h.accountQualityReader = reader
 }
 
 // NewAccountHandler creates a new admin account handler
@@ -190,9 +201,10 @@ type CheckMixedChannelRequest struct {
 // AccountWithConcurrency extends Account with real-time concurrency info
 type AccountWithConcurrency struct {
 	*dto.Account
-	CurrentConcurrency int                          `json:"current_concurrency"`
-	SchedulerScore     *AccountSchedulerScore       `json:"scheduler_score,omitempty"`
-	SchedulerScores    []AccountSchedulerGroupScore `json:"scheduler_scores,omitempty"`
+	CurrentConcurrency int                                      `json:"current_concurrency"`
+	GrokQuality        *service.ProxyPoolAccountQualitySnapshot `json:"grok_quality,omitempty"`
+	SchedulerScore     *AccountSchedulerScore                   `json:"scheduler_score,omitempty"`
+	SchedulerScores    []AccountSchedulerGroupScore             `json:"scheduler_scores,omitempty"`
 	// 以下字段仅对 Anthropic OAuth/SetupToken 账号有效，且仅在启用相应功能时返回
 	CurrentWindowCost *float64 `json:"current_window_cost,omitempty"` // 当前窗口费用
 	ActiveSessions    *int     `json:"active_sessions,omitempty"`     // 当前活跃会话数
@@ -223,6 +235,36 @@ func (h *AccountHandler) accountResponseFromService(account *service.Account) *d
 	return out
 }
 
+func (h *AccountHandler) loadAccountQualitySnapshots(ctx context.Context, accounts []*service.Account) map[int64]*service.ProxyPoolAccountQualitySnapshot {
+	if h == nil || h.accountQualityReader == nil || len(accounts) == 0 {
+		return map[int64]*service.ProxyPoolAccountQualitySnapshot{}
+	}
+	ids := make([]int64, 0, len(accounts))
+	seen := make(map[int64]struct{}, len(accounts))
+	for _, account := range accounts {
+		if account == nil || !account.IsGrok() || account.ID <= 0 {
+			continue
+		}
+		if _, ok := seen[account.ID]; ok {
+			continue
+		}
+		seen[account.ID] = struct{}{}
+		ids = append(ids, account.ID)
+	}
+	if len(ids) == 0 {
+		return map[int64]*service.ProxyPoolAccountQualitySnapshot{}
+	}
+	result, err := h.accountQualityReader.ListAccountQualitySnapshots(ctx, ids)
+	if err != nil {
+		log.Printf("[Admin] list account quality snapshots failed: %v", err)
+		return map[int64]*service.ProxyPoolAccountQualitySnapshot{}
+	}
+	if result == nil {
+		return map[int64]*service.ProxyPoolAccountQualitySnapshot{}
+	}
+	return result
+}
+
 func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, account *service.Account) AccountWithConcurrency {
 	item := AccountWithConcurrency{
 		Account:            h.accountResponseFromService(account),
@@ -230,6 +272,9 @@ func (h *AccountHandler) buildAccountResponseWithRuntime(ctx context.Context, ac
 	}
 	if account == nil {
 		return item
+	}
+	if quality := h.loadAccountQualitySnapshots(ctx, []*service.Account{account})[account.ID]; quality != nil {
+		item.GrokQuality = quality
 	}
 
 	if h.concurrencyService != nil {
@@ -554,6 +599,14 @@ func (h *AccountHandler) List(c *gin.Context) {
 	for i, acc := range accounts {
 		accountIDs[i] = acc.ID
 	}
+	accountPointers := make([]*service.Account, len(accounts))
+	for i := range accounts {
+		accountPointers[i] = &accounts[i]
+	}
+	// Account quality is a single indexed batch query and is part of the
+	// default account table. Keep it in lite responses so the first render does
+	// not incorrectly show every observed Grok account as unobserved.
+	accountQuality := h.loadAccountQualitySnapshots(c.Request.Context(), accountPointers)
 
 	concurrencyCounts := make(map[int64]int)
 	var windowCosts map[int64]float64
@@ -655,6 +708,9 @@ func (h *AccountHandler) List(c *gin.Context) {
 			CurrentConcurrency: concurrencyCounts[acc.ID],
 			SchedulerScore:     schedulerScores[acc.ID],
 			SchedulerScores:    schedulerGroupScores[acc.ID],
+		}
+		if accountQuality != nil {
+			item.GrokQuality = accountQuality[acc.ID]
 		}
 
 		// 添加窗口费用（仅当启用时）

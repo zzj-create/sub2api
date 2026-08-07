@@ -176,6 +176,7 @@ describe('admin AccountsView usage windows hint', () => {
 
     const columns = wrapper.getComponent(DataTableStub).props('columns') as Array<{ key: string }>
     expect(columns.filter(column => column.key === 'usage')).toHaveLength(1)
+    expect(columns.some(column => column.key === 'grok_quality')).toBe(true)
     expect(columns.some(column => column.key === 'ollama_cloud_usage')).toBe(false)
   })
 

@@ -250,6 +250,43 @@ type ProxyPoolQualityRepository interface {
 	ListGrokProbeAccountIDs(ctx context.Context, poolID, preferredProxyID int64, limit int) ([]int64, error)
 }
 
+// ProxyPoolAccountQualitySnapshot is the latest quality observation made with
+// one Grok account. ProxyPoolProxy keeps only the latest observation per exit;
+// this account-scoped snapshot prevents observations from different accounts
+// sharing an exit from overwriting each other in the admin UI.
+type ProxyPoolAccountQualitySnapshot struct {
+	AccountID    int64     `json:"account_id"`
+	PoolID       int64     `json:"pool_id"`
+	PoolName     string    `json:"pool_name,omitempty"`
+	ProxyID      int64     `json:"proxy_id"`
+	ProxyName    string    `json:"proxy_name,omitempty"`
+	QualityClass string    `json:"quality_class"`
+	OutputTPS    float64   `json:"output_tps"`
+	OutputTokens int64     `json:"output_tokens"`
+	DurationMs   int64     `json:"duration_ms"`
+	FirstTokenMs int64     `json:"first_token_ms"`
+	HasThinking  *bool     `json:"has_thinking,omitempty"`
+	Source       string    `json:"source"`
+	Reason       string    `json:"reason,omitempty"`
+	ErrorKind    string    `json:"error_kind,omitempty"`
+	HTTPStatus   *int      `json:"http_status,omitempty"`
+	ObservedAt   time.Time `json:"observed_at"`
+}
+
+// ProxyPoolAccountQualityRepository persists and reads account-scoped
+// observations. It is kept separate from ProxyPoolQualityRepository so the
+// existing lightweight quality-probe test doubles remain valid.
+type ProxyPoolAccountQualityRepository interface {
+	UpsertAccountQualitySnapshot(ctx context.Context, snapshot ProxyPoolAccountQualitySnapshot) error
+	ListAccountQualitySnapshots(ctx context.Context, accountIDs []int64) (map[int64]*ProxyPoolAccountQualitySnapshot, error)
+}
+
+// ProxyPoolAccountQualityReader is the read-only view consumed by the admin
+// account handler.
+type ProxyPoolAccountQualityReader interface {
+	ListAccountQualitySnapshots(ctx context.Context, accountIDs []int64) (map[int64]*ProxyPoolAccountQualitySnapshot, error)
+}
+
 // ProxyPoolQualityProber actively sends a real Grok generation through one
 // selected proxy. Implementations must never mutate account credentials.
 type ProxyPoolQualityProber interface {

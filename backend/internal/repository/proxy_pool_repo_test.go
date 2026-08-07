@@ -115,6 +115,73 @@ func TestProxyPoolRepositoryListsQualityAccount(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestProxyPoolRepositoryUpsertsAccountQualitySnapshot(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	observedAt := time.Now().UTC()
+	hasThinking := true
+	httpStatus := 200
+	mock.ExpectExec("INSERT INTO proxy_pool_account_quality_snapshots").
+		WithArgs(
+			int64(42), int64(7), int64(9), service.ProxyPoolQualityHealthy,
+			float64(123.5), int64(64), int64(2000), int64(250), true,
+			"passive", "quality observation recorded", "", 200, observedAt,
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	repo := NewProxyPoolRepository(db)
+	qualityRepo, ok := repo.(service.ProxyPoolAccountQualityRepository)
+	require.True(t, ok)
+	err = qualityRepo.UpsertAccountQualitySnapshot(context.Background(), service.ProxyPoolAccountQualitySnapshot{
+		AccountID: 42, PoolID: 7, ProxyID: 9,
+		QualityClass: service.ProxyPoolQualityHealthy,
+		OutputTPS:    123.5, OutputTokens: 64, DurationMs: 2000, FirstTokenMs: 250,
+		HasThinking: &hasThinking, Source: "passive", Reason: "quality observation recorded",
+		HTTPStatus: &httpStatus, ObservedAt: observedAt,
+	})
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProxyPoolRepositoryListsAccountQualitySnapshots(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	observedAt := time.Now().UTC()
+	mock.ExpectQuery("SELECT q.account_id[\\s\\S]+proxy_pool_account_quality_snapshots").
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"account_id", "pool_id", "pool_name", "proxy_id", "proxy_name", "quality_class",
+			"output_tps", "output_tokens", "duration_ms", "first_token_ms", "has_thinking",
+			"source", "reason", "error_kind", "http_status", "observed_at",
+		}).AddRow(
+			int64(42), int64(7), "Grok pool", int64(9), "TN exit", service.ProxyPoolQualityHealthy,
+			float64(123.5), int64(64), int64(2000), int64(250), true,
+			"passive", "quality observation recorded", "", 200, observedAt,
+		))
+
+	repo := NewProxyPoolRepository(db)
+	qualityRepo, ok := repo.(service.ProxyPoolAccountQualityRepository)
+	require.True(t, ok)
+	snapshots, err := qualityRepo.ListAccountQualitySnapshots(context.Background(), []int64{42})
+
+	require.NoError(t, err)
+	require.Contains(t, snapshots, int64(42))
+	snapshot := snapshots[42]
+	require.Equal(t, "Grok pool", snapshot.PoolName)
+	require.Equal(t, "TN exit", snapshot.ProxyName)
+	require.InDelta(t, 123.5, snapshot.OutputTPS, 0.001)
+	require.NotNil(t, snapshot.HasThinking)
+	require.True(t, *snapshot.HasThinking)
+	require.NotNil(t, snapshot.HTTPStatus)
+	require.Equal(t, 200, *snapshot.HTTPStatus)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestProxyPoolRepositoryCreateTranslatesDuplicateName(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)

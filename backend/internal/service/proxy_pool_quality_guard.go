@@ -350,14 +350,96 @@ func (s *ProxyPoolService) applyProxyPoolQualityObservation(
 	}
 
 	writeCtx, cancel := context.WithTimeout(context.Background(), proxyPoolHealthWriteTimeout)
-	defer cancel()
 	if err := s.repo.UpdateProxyPoolHealth(writeCtx, pool.ID, proxy.ID, proxyPoolHealthSnapshot(proxy)); err != nil {
 		log.Printf("[ProxyPool] update quality for proxy %d failed: %v", proxy.ID, err)
 	}
+	cancel()
+	accountWriteCtx, accountWriteCancel := context.WithTimeout(context.Background(), proxyPoolHealthWriteTimeout)
+	if err := s.persistAccountQualitySnapshot(accountWriteCtx, pool, proxy, observation, observedAt); err != nil {
+		log.Printf("[ProxyPool] update quality for account %d failed: %v", observation.AccountID, err)
+	}
+	accountWriteCancel()
 	if shouldQuarantine || shouldCrossVerify {
 		return shouldQuarantine, shouldCrossVerify
 	}
 	return false, false
+}
+
+func (s *ProxyPoolService) persistAccountQualitySnapshot(
+	ctx context.Context,
+	pool *ProxyPool,
+	proxy *ProxyPoolProxy,
+	observation ProxyPoolQualityObservation,
+	observedAt time.Time,
+) error {
+	if s == nil || s.accountQualityRepo == nil || pool == nil || proxy == nil || observation.AccountID <= 0 {
+		return nil
+	}
+	class := strings.ToLower(strings.TrimSpace(observation.Classification))
+	if class == "" {
+		class = ProxyPoolQualityUnknown
+	}
+	if class == ProxyPoolQualityError && !proxyPoolQualityErrorIsTransport(observation.ErrorKind) {
+		class = ProxyPoolQualityIgnored
+	}
+	if observation.ErrorKind == ProxyPoolQualityErrorTransport {
+		class = ProxyPoolQualityError
+	}
+	reason := truncateProxyPoolQualityMessage(observation.Reason)
+	if reason == "" {
+		reason = qualityClassReason(class, observation.OutputTPS)
+	}
+	var hasThinking *bool
+	if observation.OutputTokens > 0 {
+		value := observation.HasThinking
+		hasThinking = &value
+	}
+	var httpStatus *int
+	if observation.HTTPStatus > 0 {
+		value := observation.HTTPStatus
+		httpStatus = &value
+	}
+	snapshot := ProxyPoolAccountQualitySnapshot{
+		AccountID:    observation.AccountID,
+		PoolID:       pool.ID,
+		PoolName:     pool.Name,
+		ProxyID:      proxy.ID,
+		ProxyName:    proxy.Name,
+		QualityClass: class,
+		OutputTPS:    clampProxyPoolTPS(observation.OutputTPS),
+		OutputTokens: observation.OutputTokens,
+		DurationMs:   observation.DurationMs,
+		FirstTokenMs: observation.FirstTokenMs,
+		HasThinking:  hasThinking,
+		Source:       observation.Source,
+		Reason:       reason,
+		ErrorKind:    observation.ErrorKind,
+		HTTPStatus:   httpStatus,
+		ObservedAt:   observedAt,
+	}
+	if snapshot.Source == "" {
+		snapshot.Source = "passive"
+	}
+	if err := s.accountQualityRepo.UpsertAccountQualitySnapshot(ctx, snapshot); err != nil {
+		return err
+	}
+	s.accountQualityWrites.Store(snapshot.AccountID, observedAt)
+	return nil
+}
+
+func (s *ProxyPoolService) accountQualitySnapshotDue(accountID int64, window time.Duration, now time.Time) bool {
+	if s == nil || accountID <= 0 {
+		return false
+	}
+	if window <= 0 {
+		window = DefaultProxyPoolQualityPolicy().PassiveWindow()
+	}
+	value, ok := s.accountQualityWrites.Load(accountID)
+	if !ok {
+		return true
+	}
+	last, ok := value.(time.Time)
+	return !ok || !now.Before(last.Add(window))
 }
 
 func proxyPoolQualityErrorIsTransport(kind string) bool {
@@ -478,9 +560,6 @@ func (s *ProxyPoolService) ObserveGrokResponse(ctx context.Context, account *Acc
 	}
 	policy := pool.ProxyPoolQualityPolicy
 	policy.Normalize()
-	if target.QualityObservedAt != nil && time.Since(*target.QualityObservedAt) < policy.PassiveWindow() {
-		return
-	}
 	obs := ProxyPoolQualityObservation{
 		Classification: ClassifyProxyPoolQuality(
 			ComputeProxyPoolTPS(int64(result.Usage.OutputTokens), result.Duration.Milliseconds(), firstTokenMs, policy.MinGenerationMs),
@@ -494,6 +573,17 @@ func (s *ProxyPoolService) ObserveGrokResponse(ctx context.Context, account *Acc
 		AccountID:    account.ID,
 	}
 	obs.OutputTPS = clampProxyPoolTPS(ComputeProxyPoolTPS(obs.OutputTokens, obs.DurationMs, obs.FirstTokenMs, policy.MinGenerationMs))
+	observedAt := time.Now().UTC()
+	if target.QualityObservedAt != nil && observedAt.Sub(*target.QualityObservedAt) < policy.PassiveWindow() {
+		if s.accountQualitySnapshotDue(account.ID, policy.PassiveWindow(), observedAt) {
+			writeCtx, cancel := context.WithTimeout(context.Background(), proxyPoolHealthWriteTimeout)
+			if err := s.persistAccountQualitySnapshot(writeCtx, pool, target, obs, observedAt); err != nil {
+				log.Printf("[ProxyPool] update passive quality for account %d failed: %v", account.ID, err)
+			}
+			cancel()
+		}
+		return
+	}
 	quarantined, crossVerify := s.applyProxyPoolQualityObservation(ctx, pool, target, proxies, obs)
 	release()
 	locked = false

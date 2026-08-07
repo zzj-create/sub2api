@@ -160,6 +160,7 @@ export default {
         todayStats: 'Today Stats',
         groups: 'Groups',
         usageWindows: 'Usage Windows',
+        grokQuality: 'Grok Quality',
         proxy: 'Proxy',
         lastUsed: 'Last Used',
         createdAt: 'Created',
@@ -173,6 +174,33 @@ export default {
         hint: 'Displayed as "group / base score / sticky bonus". The base score is computed within the current filtered candidate set and includes priority, load, queue depth, error rate, first-token latency, reset window, quota headroom, billing rate, and related factors. The sticky bonus applies only when sticky weighting is enabled for previous_response_id or session_hash. Higher scores are preferred.'
       },
       usageWindowsHint: '"5h / 7d" are the upstream account\'s official rolling usage windows (e.g. OpenAI ChatGPT, Claude). They are imposed by the upstream provider on the account itself — not configured by sub2api, and unrelated to the models you map. Usage resets automatically once each window rolls over, and the limit cannot be lifted from within sub2api.',
+      grokQuality: {
+        title: 'Grok egress quality details',
+        notObserved: 'Awaiting observation',
+        openDetails: 'View Grok quality details',
+        tps: 'Output speed',
+        outputTokens: 'Output tokens',
+        duration: 'Total duration',
+        firstToken: 'First token',
+        thinking: 'Thinking',
+        sourceLabel: 'Source',
+        observedAt: 'Observed at',
+        pool: 'Proxy pool',
+        proxy: 'Observed proxy',
+        httpStatus: 'HTTP status',
+        status: {
+          healthy: 'Healthy',
+          soft: 'Slow',
+          hard: 'Quality risk',
+          error: 'Network error',
+          ignored: 'Ignored',
+          unknown: 'Unknown'
+        },
+        source: {
+          active: 'Active probe',
+          passive: 'Live request'
+        }
+      },
       ollamaCloud: {
         title: 'Ollama Cloud usage',
         sessionSecurityHint: 'The browser session is encrypted at rest and sent only to the fixed official settings URL.',

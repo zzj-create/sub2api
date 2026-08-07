@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/lib/pq"
@@ -932,6 +934,7 @@ func (r *proxyPoolRepository) ListGrokProbeAccountIDs(ctx context.Context, poolI
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT a.id
 		FROM accounts a
+		LEFT JOIN proxy_pool_account_quality_snapshots aq ON aq.account_id = a.id
 		WHERE a.pool_id = $1
 			AND a.deleted_at IS NULL
 			AND a.status = 'active'
@@ -941,7 +944,8 @@ func (r *proxyPoolRepository) ListGrokProbeAccountIDs(ctx context.Context, poolI
 			AND (a.temp_unschedulable_until IS NULL OR a.temp_unschedulable_until <= NOW())
 			AND (a.rate_limit_reset_at IS NULL OR a.rate_limit_reset_at <= NOW())
 		ORDER BY CASE WHEN a.proxy_id = $3 THEN 0 ELSE 1 END,
-			         a.last_used_at NULLS FIRST, a.id ASC
+		         aq.observed_at NULLS FIRST,
+		         a.last_used_at NULLS FIRST, a.id ASC
 		LIMIT $4
 	`, poolID, service.PlatformGrok, preferredProxyID, limit)
 	if err != nil {
@@ -949,6 +953,126 @@ func (r *proxyPoolRepository) ListGrokProbeAccountIDs(ctx context.Context, poolI
 	}
 	defer func() { _ = rows.Close() }()
 	return scanInt64Rows(rows)
+}
+
+// UpsertAccountQualitySnapshot stores the latest observation for one account.
+// The timestamp guard prevents a slower concurrent probe from replacing a
+// newer result that completed first.
+func (r *proxyPoolRepository) UpsertAccountQualitySnapshot(ctx context.Context, snapshot service.ProxyPoolAccountQualitySnapshot) error {
+	if r == nil || r.db == nil || snapshot.AccountID <= 0 || snapshot.PoolID <= 0 || snapshot.ProxyID <= 0 {
+		return errors.New("invalid account quality snapshot")
+	}
+	qualityClass := strings.TrimSpace(snapshot.QualityClass)
+	if qualityClass == "" {
+		qualityClass = service.ProxyPoolQualityUnknown
+	}
+	source := strings.TrimSpace(snapshot.Source)
+	if source == "" {
+		source = "passive"
+	}
+	observedAt := snapshot.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	var hasThinking any
+	if snapshot.HasThinking != nil {
+		hasThinking = *snapshot.HasThinking
+	}
+	var httpStatus any
+	if snapshot.HTTPStatus != nil {
+		httpStatus = *snapshot.HTTPStatus
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO proxy_pool_account_quality_snapshots (
+			account_id, pool_id, proxy_id, quality_class, output_tps,
+			output_tokens, duration_ms, first_token_ms, has_thinking,
+			source, reason, error_kind, http_status, observed_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW())
+		ON CONFLICT (account_id) DO UPDATE SET
+			pool_id = EXCLUDED.pool_id,
+			proxy_id = EXCLUDED.proxy_id,
+			quality_class = EXCLUDED.quality_class,
+			output_tps = EXCLUDED.output_tps,
+			output_tokens = EXCLUDED.output_tokens,
+			duration_ms = EXCLUDED.duration_ms,
+			first_token_ms = EXCLUDED.first_token_ms,
+			has_thinking = EXCLUDED.has_thinking,
+			source = EXCLUDED.source,
+			reason = EXCLUDED.reason,
+			error_kind = EXCLUDED.error_kind,
+			http_status = EXCLUDED.http_status,
+			observed_at = EXCLUDED.observed_at,
+			updated_at = NOW()
+		WHERE proxy_pool_account_quality_snapshots.observed_at <= EXCLUDED.observed_at
+	`, snapshot.AccountID, snapshot.PoolID, snapshot.ProxyID, qualityClass,
+		snapshot.OutputTPS, snapshot.OutputTokens, snapshot.DurationMs,
+		snapshot.FirstTokenMs, hasThinking, source, snapshot.Reason,
+		snapshot.ErrorKind, httpStatus, observedAt)
+	return err
+}
+
+// ListAccountQualitySnapshots returns one latest snapshot per requested
+// account. Pool and proxy names are joined at read time so renames are
+// immediately reflected in the admin table.
+func (r *proxyPoolRepository) ListAccountQualitySnapshots(ctx context.Context, accountIDs []int64) (map[int64]*service.ProxyPoolAccountQualitySnapshot, error) {
+	result := make(map[int64]*service.ProxyPoolAccountQualitySnapshot, len(accountIDs))
+	if r == nil || r.db == nil || len(accountIDs) == 0 {
+		return result, nil
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT q.account_id, q.pool_id, COALESCE(pp.name, ''),
+		       q.proxy_id, COALESCE(p.name, ''), q.quality_class,
+		       q.output_tps, q.output_tokens, q.duration_ms, q.first_token_ms,
+		       q.has_thinking, q.source, COALESCE(q.reason, ''),
+		       COALESCE(q.error_kind, ''), q.http_status, q.observed_at
+		FROM proxy_pool_account_quality_snapshots q
+		LEFT JOIN proxy_pools pp ON pp.id = q.pool_id
+		LEFT JOIN proxies p ON p.id = q.proxy_id
+		WHERE q.account_id = ANY($1)
+	`, pq.Array(accountIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			accountID, poolID, proxyID             int64
+			poolName, proxyName, qualityClass      string
+			outputTPS                              float64
+			outputTokens, durationMs, firstTokenMs int64
+			hasThinking                            sql.NullBool
+			source, reason, errorKind              string
+			httpStatus                             sql.NullInt64
+			observedAt                             time.Time
+		)
+		if err := rows.Scan(
+			&accountID, &poolID, &poolName, &proxyID, &proxyName, &qualityClass,
+			&outputTPS, &outputTokens, &durationMs, &firstTokenMs, &hasThinking,
+			&source, &reason, &errorKind, &httpStatus, &observedAt,
+		); err != nil {
+			return nil, err
+		}
+		snapshot := &service.ProxyPoolAccountQualitySnapshot{
+			AccountID: accountID, PoolID: poolID, PoolName: poolName,
+			ProxyID: proxyID, ProxyName: proxyName, QualityClass: qualityClass,
+			OutputTPS: outputTPS, OutputTokens: outputTokens, DurationMs: durationMs,
+			FirstTokenMs: firstTokenMs, Source: source, Reason: reason,
+			ErrorKind: errorKind, ObservedAt: observedAt,
+		}
+		if hasThinking.Valid {
+			value := hasThinking.Bool
+			snapshot.HasThinking = &value
+		}
+		if httpStatus.Valid {
+			value := int(httpStatus.Int64)
+			snapshot.HTTPStatus = &value
+		}
+		result[accountID] = snapshot
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (r *proxyPoolRepository) ListPoolUnassignedAccountIDs(ctx context.Context, poolID int64) ([]int64, error) {

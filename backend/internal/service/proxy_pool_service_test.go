@@ -12,21 +12,22 @@ import (
 )
 
 type proxyPoolServiceTestRepo struct {
-	mu            sync.Mutex
-	pool          *ProxyPool
-	proxies       map[int64]ProxyPoolProxy
-	counts        map[int64]int64
-	accountProxy  map[int64]int64
-	unassigned    []int64
-	assignments   []ProxyPoolAccountAssignment
-	pending       []int64
-	boundGroups   []int64
-	unboundGroups []int64
-	groupSyncs    int64
-	groupSynced   bool
-	bindErr       error
-	healthUpdates []proxyPoolHealthUpdate
-	logs          []ProxyPoolRebindLog
+	mu               sync.Mutex
+	pool             *ProxyPool
+	proxies          map[int64]ProxyPoolProxy
+	counts           map[int64]int64
+	accountProxy     map[int64]int64
+	unassigned       []int64
+	assignments      []ProxyPoolAccountAssignment
+	pending          []int64
+	boundGroups      []int64
+	unboundGroups    []int64
+	groupSyncs       int64
+	groupSynced      bool
+	bindErr          error
+	healthUpdates    []proxyPoolHealthUpdate
+	qualitySnapshots map[int64]ProxyPoolAccountQualitySnapshot
+	logs             []ProxyPoolRebindLog
 }
 
 type proxyPoolHealthUpdate struct {
@@ -38,10 +39,11 @@ type proxyPoolHealthUpdate struct {
 
 func newProxyPoolServiceTestRepo(pool *ProxyPool, proxies ...ProxyPoolProxy) *proxyPoolServiceTestRepo {
 	repo := &proxyPoolServiceTestRepo{
-		pool:         pool,
-		proxies:      make(map[int64]ProxyPoolProxy, len(proxies)),
-		counts:       make(map[int64]int64),
-		accountProxy: make(map[int64]int64),
+		pool:             pool,
+		proxies:          make(map[int64]ProxyPoolProxy, len(proxies)),
+		counts:           make(map[int64]int64),
+		accountProxy:     make(map[int64]int64),
+		qualitySnapshots: make(map[int64]ProxyPoolAccountQualitySnapshot),
 	}
 	for _, proxy := range proxies {
 		repo.proxies[proxy.ID] = proxy
@@ -190,6 +192,32 @@ func (r *proxyPoolServiceTestRepo) UpdateProxyPoolHealth(_ context.Context, pool
 		proxyID: proxyID, health: snapshot.Health, failures: snapshot.Failures, grokStatus: snapshot.GrokQualityStatus,
 	})
 	return nil
+}
+
+func (r *proxyPoolServiceTestRepo) UpsertAccountQualitySnapshot(_ context.Context, snapshot ProxyPoolAccountQualitySnapshot) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.qualitySnapshots == nil {
+		r.qualitySnapshots = make(map[int64]ProxyPoolAccountQualitySnapshot)
+	}
+	current, exists := r.qualitySnapshots[snapshot.AccountID]
+	if !exists || !current.ObservedAt.After(snapshot.ObservedAt) {
+		r.qualitySnapshots[snapshot.AccountID] = snapshot
+	}
+	return nil
+}
+
+func (r *proxyPoolServiceTestRepo) ListAccountQualitySnapshots(_ context.Context, accountIDs []int64) (map[int64]*ProxyPoolAccountQualitySnapshot, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	result := make(map[int64]*ProxyPoolAccountQualitySnapshot, len(accountIDs))
+	for _, id := range accountIDs {
+		if snapshot, ok := r.qualitySnapshots[id]; ok {
+			copy := snapshot
+			result[id] = &copy
+		}
+	}
+	return result, nil
 }
 
 func (r *proxyPoolServiceTestRepo) ListPoolUnassignedAccountIDs(_ context.Context, _ int64) ([]int64, error) {

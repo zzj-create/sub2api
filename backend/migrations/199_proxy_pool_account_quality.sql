@@ -33,7 +33,8 @@ INSERT INTO proxy_pool_account_quality_snapshots (
     account_id, pool_id, proxy_id, quality_class, output_tps, output_tokens,
     duration_ms, first_token_ms, source, reason, observed_at, updated_at
 )
-SELECT p.pool_quality_account_id, p.pool_id, p.id, p.pool_quality_class,
+SELECT DISTINCT ON (p.pool_quality_account_id)
+       p.pool_quality_account_id, p.pool_id, p.id, p.pool_quality_class,
        p.pool_quality_output_tps, p.pool_quality_output_tokens,
        p.pool_quality_duration_ms, p.pool_quality_first_token_ms,
        COALESCE(p.pool_quality_last_source, 'active'),
@@ -43,6 +44,7 @@ JOIN accounts a ON a.id = p.pool_quality_account_id
 WHERE p.pool_quality_account_id IS NOT NULL
   AND p.pool_id IS NOT NULL
   AND p.pool_quality_observed_at IS NOT NULL
+ORDER BY p.pool_quality_account_id, p.pool_quality_observed_at DESC, p.id DESC
 ON CONFLICT (account_id) DO UPDATE
 SET pool_id = EXCLUDED.pool_id,
     proxy_id = EXCLUDED.proxy_id,

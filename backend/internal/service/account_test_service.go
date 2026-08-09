@@ -968,7 +968,7 @@ func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, accoun
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(responseBody))
 	}
-	snapshot := parseGrokQuotaSnapshot(resp.Header, resp.StatusCode, now)
+	snapshot := parseGrokQuotaSnapshotWithBody(resp.Header, resp.StatusCode, responseBody, now)
 	if snapshot != nil && s.accountRepo != nil {
 		resetAt, limited := grokRateLimitResetAtForAccount(account, snapshot, now)
 		if limited {
@@ -998,13 +998,8 @@ func (s *AccountTestService) observeGrokTestResponse(ctx context.Context, accoun
 	}
 	decision := classifyGrokUpstreamFailure(resp.StatusCode, responseBody, "")
 	if decision.Class == GrokFailureFreeUsage {
-		if resetAt, limited := grokRateLimitResetAtForAccount(account, snapshot, now); limited && resetAt.After(now) {
-			persistGrokRateLimit(ctx, s.accountRepo, account, resetAt)
-		} else {
-			stateCtx, cancel := openAIAccountStateContext(ctx)
-			_ = s.accountRepo.SetTempUnschedulable(stateCtx, account.ID, now.Add(grokFreeUsageProbeCooldown), "grok free usage exhausted")
-			cancel()
-		}
+		// The body-aware snapshot above already installed the durable 24-hour
+		// rate limit, including when reset headers were absent.
 		return
 	}
 	if decision.Class == GrokFailureBilling && (isGrokSpendingLimitError(responseBody) || strings.Contains(strings.ToLower(decision.Reason), "credit")) {

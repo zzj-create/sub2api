@@ -1638,7 +1638,8 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 		return
 	}
 	now := time.Now()
-	s.updateGrokUsageSnapshot(ctx, account, parseGrokQuotaSnapshot(headers, statusCode, now))
+	quotaSnapshot := parseGrokQuotaSnapshotWithBody(headers, statusCode, responseBody, now)
+	s.updateGrokUsageSnapshot(ctx, account, quotaSnapshot)
 
 	// Body-first free-usage / empty / billing / capacity must run before the
 	// status switch so non-429 free-usage bodies still cool the account.
@@ -1648,17 +1649,13 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 		if account.IsPoolMode() {
 			// Allow configured temp rules (403) below; skip default body cools.
 		} else {
-			// A free-tier exhaustion message describes a rolling usage window. Use
-			// an upstream absolute reset (or Retry-After) when available; otherwise
-			// apply only a short probe cooldown. Never start a fabricated 24h window
-			// at the instant this error was received.
+			// Free usage exhaustion is account-scoped in the restored policy. The
+			// body-aware snapshot supplies a 24-hour fallback when xAI omits reset
+			// headers, so the account visibly enters durable rate-limit state.
 			if decision.Class == GrokFailureFreeUsage {
-				if resetAt, limited := grokRateLimitResetAtForAccount(account, parseGrokQuotaSnapshot(headers, statusCode, now), now); limited && resetAt.After(now) {
-					if decision.Model != "" && isGrokModelSpecificFreeUsage(strings.ToLower(decision.Reason), decision.Model) {
-						markGrokModelQuotaBlock(account.ID, decision.Model, resetAt)
-						return
-					}
-					s.rateLimitGrok(ctx, account, resetAt)
+				if resetAt, limited := grokRateLimitResetAtForAccount(account, quotaSnapshot, now); limited && resetAt.After(now) {
+					// updateGrokUsageSnapshot already installed this exact durable
+					// generation and its runtime block.
 					return
 				}
 			}

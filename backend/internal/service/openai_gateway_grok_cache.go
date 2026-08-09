@@ -305,8 +305,9 @@ func applyGrokFreeToolCacheRoute(body, intentSourceBody []byte, account *Account
 }
 
 // isKnownGrokFreeAccount recognizes free-tier Grok accounts, used for
-// Free cache routing / media free_tier blocks (broader than soft-gate).
-// Soft-gate uses isExplicitGrokFreeOAuthAccount (exact "free" only).
+// Free cache routing / media free_tier blocks.
+// The rolling scheduling gate uses grokOAuthUsesFreeRollingQuota, which treats
+// unclassified OAuth accounts as Free unless paid evidence exists.
 func isKnownGrokFreeAccount(account *Account) bool {
 	if account == nil || !account.IsGrokOAuth() {
 		return false

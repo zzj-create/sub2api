@@ -96,12 +96,9 @@ func TestHandleGrokAccountUpstreamError_FreeUsageBodyCoolsAccount(t *testing.T) 
 
 	svc.handleGrokAccountUpstreamError(context.Background(), account, http.StatusBadRequest, nil, body)
 
-	require.Equal(t, 1, repo.tempUnschedCalls)
-	require.Equal(t, "grok free usage exhausted", repo.lastTempUnschedReason)
-	// Rolling-window exhaustion must use a short probe cooldown when no
-	// upstream absolute reset is available; it must not start a 24h lock here.
-	require.Greater(t, repo.lastTempUnschedUntil, before.Add(grokFreeUsageProbeCooldown-time.Second))
-	require.Less(t, repo.lastTempUnschedUntil, before.Add(grokFreeUsageProbeCooldown+time.Second))
+	require.Zero(t, repo.tempUnschedCalls)
+	require.Equal(t, 1, repo.rateLimitedCalls)
+	require.WithinDuration(t, before.Add(grokFreeUsageExhaustionCooldown), repo.lastRateLimitResetAt, time.Second)
 }
 
 func TestHandleGrokAccountUpstreamError_FreeUsageUsesUpstreamReset(t *testing.T) {
@@ -114,7 +111,7 @@ func TestHandleGrokAccountUpstreamError_FreeUsageUsesUpstreamReset(t *testing.T)
 		http.Header{"Retry-After": []string{"3600"}}, body)
 
 	require.Zero(t, repo.tempUnschedCalls)
-	require.WithinDuration(t, time.Now().Add(time.Hour), repo.lastRateLimitResetAt, 2*time.Second)
+	require.WithinDuration(t, time.Now().Add(grokFreeUsageExhaustionCooldown), repo.lastRateLimitResetAt, 2*time.Second)
 }
 
 func TestHandleGrokAccountUpstreamError_EmptyOutputCoolsAccount(t *testing.T) {

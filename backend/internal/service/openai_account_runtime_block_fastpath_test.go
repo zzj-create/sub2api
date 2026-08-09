@@ -444,3 +444,13 @@ func TestShouldStopOpenAIOAuth429Failover_TracksOneGrokFollowupAttempt(t *testin
 	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusTooManyRequests, 0, &state))
 	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(apiKeyAccount, http.StatusTooManyRequests, 2, &state))
 }
+
+func TestShouldStopOpenAIOAuth429Failover_FreeUsageContinuesBoundedAccountFailover(t *testing.T) {
+	svc := &OpenAIGatewayService{}
+	account := &Account{ID: 46, Platform: PlatformGrok, Type: AccountTypeOAuth}
+	body := []byte(`{"error":{"code":"subscription:free-usage-exhausted","message":"included free usage exhausted"}}`)
+	var state OpenAIOAuth429FailoverState
+
+	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusTooManyRequests, 1, &state, body))
+	require.False(t, svc.ShouldStopOpenAIOAuth429Failover(account, http.StatusTooManyRequests, 2, &state, body))
+}

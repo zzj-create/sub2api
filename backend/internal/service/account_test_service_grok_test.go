@@ -41,8 +41,9 @@ func TestObserveGrokTestResponseClassifiesBodyOnlyQuotaErrors(t *testing.T) {
 		Body:       io.NopCloser(strings.NewReader(`{"error":{"code":"subscription:free-usage-exhausted","message":"included free usage exhausted"}}`)),
 	}
 	svc.observeGrokTestResponse(context.Background(), account, resp)
-	require.Equal(t, 1, repo.tempUnschedCalls)
-	require.Equal(t, "grok free usage exhausted", repo.lastTempUnschedReason)
+	require.Zero(t, repo.tempUnschedCalls)
+	require.Equal(t, 1, repo.rateLimitedCalls)
+	require.WithinDuration(t, time.Now().Add(grokFreeUsageExhaustionCooldown), repo.lastRateLimitResetAt, time.Second)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.Contains(t, string(body), "free-usage-exhausted")

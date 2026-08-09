@@ -1409,7 +1409,7 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	if s.isOpenAIAccountBlockedBySchedulingThreshold(ctx, account) {
 		return nil, nil
 	}
-	// Legacy sticky (advanced scheduler off) must still free-gate Grok OAuth.
+	// Legacy sticky (advanced scheduler off) must still hard-gate Grok OAuth.
 	if account.IsGrok() {
 		if gated := s.filterGrokFreeQuotaAccountsForOpenAI(ctx, []Account{*account}); len(gated) == 0 {
 			return nil, nil
@@ -1418,13 +1418,13 @@ func (s *OpenAIGatewayService) getSchedulableAccount(ctx context.Context, accoun
 	return account, nil
 }
 
-// filterGrokFreeQuotaAccountsForOpenAI applies the same local free soft-gate as
+// filterGrokFreeQuotaAccountsForOpenAI applies the same hard rolling gate as
 // GatewayService / advanced scheduler, for OpenAI-compatible legacy selection.
 func (s *OpenAIGatewayService) filterGrokFreeQuotaAccountsForOpenAI(ctx context.Context, accounts []Account) []Account {
 	if s == nil {
 		return accounts
 	}
-	return filterGrokFreeQuotaAccountsCore(ctx, s.cfg, s.usageLogRepo, &openaiGrokFreeQuotaGateCache, accounts)
+	return filterGrokFreeQuotaAccountsCore(ctx, s.usageLogRepo, s.accountRepo, accounts)
 }
 
 func (s *OpenAIGatewayService) filterOpenAIAccountsBySchedulingThreshold(ctx context.Context, accounts []Account) []Account {

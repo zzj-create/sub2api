@@ -12,4 +12,3 @@ CREATE TABLE IF NOT EXISTS proxy_pool_groups (
 
 CREATE INDEX IF NOT EXISTS idx_proxy_pool_groups_pool_id
     ON proxy_pool_groups(pool_id);
-

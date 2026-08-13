@@ -98,7 +98,7 @@ func TestExtractGrokResponsesReasoningEffortSupportsOpenAICompatibleField(t *tes
 	require.Equal(t, "high", *effort)
 }
 
-func TestPatchGrokResponsesBodyDropsGrok45ReasoningUnsupportedFields(t *testing.T) {
+func TestPatchGrokResponsesBodyDropsLatestGrokUnsupportedFields(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`{
@@ -111,15 +111,20 @@ func TestPatchGrokResponsesBodyDropsGrok45ReasoningUnsupportedFields(t *testing.
 		"stop": ["done"]
 	}`)
 
-	patched, err := patchGrokResponsesBody(body, "grok-4.5")
-	require.NoError(t, err)
-	require.True(t, json.Valid(patched))
-	require.Equal(t, "grok-4.5", gjson.GetBytes(patched, "model").String())
-	require.False(t, gjson.GetBytes(patched, "presence_penalty").Exists())
-	require.False(t, gjson.GetBytes(patched, "presencePenalty").Exists())
-	require.False(t, gjson.GetBytes(patched, "frequency_penalty").Exists())
-	require.False(t, gjson.GetBytes(patched, "frequencyPenalty").Exists())
-	require.False(t, gjson.GetBytes(patched, "stop").Exists())
+	for _, model := range []string{"grok-4.5", "grok-4.6", "x-ai/grok-4.6-latest"} {
+		model := model
+		t.Run(model, func(t *testing.T) {
+			patched, err := patchGrokResponsesBody(body, model)
+			require.NoError(t, err)
+			require.True(t, json.Valid(patched))
+			require.Equal(t, model, gjson.GetBytes(patched, "model").String())
+			require.False(t, gjson.GetBytes(patched, "presence_penalty").Exists())
+			require.False(t, gjson.GetBytes(patched, "presencePenalty").Exists())
+			require.False(t, gjson.GetBytes(patched, "frequency_penalty").Exists())
+			require.False(t, gjson.GetBytes(patched, "frequencyPenalty").Exists())
+			require.False(t, gjson.GetBytes(patched, "stop").Exists())
+		})
+	}
 }
 
 func TestPatchGrokResponsesBodyKeepsPenaltyAndStopFieldsForNon45Models(t *testing.T) {
@@ -172,6 +177,19 @@ func TestPatchGrokResponsesBodyNormalizesReasoningEffortAliases(t *testing.T) {
 			require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
 		})
 	}
+}
+
+func TestPatchGrokResponsesBodyPreservesGrok46ModelAndReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	patched, err := patchGrokResponsesBody(
+		[]byte(`{"model":"grok-4.5","input":"hello","reasoningEffort":"xhigh"}`),
+		"grok-4.6",
+	)
+	require.NoError(t, err)
+	require.Equal(t, "grok-4.6", gjson.GetBytes(patched, "model").String())
+	require.Equal(t, "high", gjson.GetBytes(patched, "reasoning_effort").String())
+	require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
 }
 
 func TestPatchGrokResponsesBodyAddsDefaultFunctionParameters(t *testing.T) {

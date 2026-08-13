@@ -467,7 +467,7 @@ func patchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, erro
 			}
 		}
 	}
-	if strings.EqualFold(upstreamModel, "grok-4.5") {
+	if grokModelRejectsPenaltyAndStopFields(upstreamModel) {
 		for _, unsupportedField := range []string{"presence_penalty", "presencePenalty", "frequency_penalty", "frequencyPenalty", "stop"} {
 			if gjson.GetBytes(out, unsupportedField).Exists() {
 				out, err = sjson.DeleteBytes(out, unsupportedField)
@@ -508,6 +508,16 @@ func patchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, erro
 		return nil, err
 	}
 	return out, nil
+}
+
+func grokModelRejectsPenaltyAndStopFields(model string) bool {
+	model = strings.ToLower(xai.StripGrokProviderPrefix(strings.TrimSpace(model)))
+	switch model {
+	case "grok-4.5", "grok-4.5-latest", "grok-4.6", "grok-4.6-latest":
+		return true
+	default:
+		return false
+	}
 }
 
 // xAI's Grok 4.20 family and newer models do not support OpenAI's logprobs
@@ -636,7 +646,7 @@ func normalizeGrokReasoningEffortValue(raw string) (string, bool) {
 func grokSupportsReasoningEffort(model string) bool {
 	model = strings.ToLower(xai.StripGrokProviderPrefix(strings.TrimSpace(model)))
 	switch model {
-	case xai.DefaultTextModel, "grok-4.5-latest", "grok-4.3", "grok-4.3-latest",
+	case "grok-4.6", "grok-4.6-latest", xai.DefaultTextModel, "grok-4.5-latest", "grok-4.3", "grok-4.3-latest",
 		"grok-3-mini", "grok-3-mini-fast", "grok-4.20-0309-reasoning",
 		"grok-4.20-reasoning", "grok-4.20-multi-agent-0309":
 		return true

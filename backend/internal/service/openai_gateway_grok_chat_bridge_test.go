@@ -218,9 +218,12 @@ func TestGrokChatResponsesBridgeEligibility(t *testing.T) {
 func TestGrokChatResponsesRuntimeEligibility(t *testing.T) {
 	t.Parallel()
 	require.True(t, grokChatResponsesRuntimeEligible("grok-4.5", "isolated-id"))
+	require.True(t, grokChatResponsesRuntimeEligible("grok-4.6", "isolated-id"))
+	require.True(t, grokChatResponsesRuntimeEligible("x-ai/grok-4.6", "isolated-id"))
 	require.False(t, grokChatResponsesRuntimeEligible("grok-4.3", "isolated-id"))
 	require.False(t, grokChatResponsesRuntimeEligible("grok-4.5-build-free", "isolated-id"))
 	require.False(t, grokChatResponsesRuntimeEligible("grok-4.5", ""))
+	require.False(t, grokChatResponsesRuntimeEligible("grok-4.6", ""))
 }
 
 func TestForwardGrokChatViaResponsesNonStreamingCachesAndReturnsChat(t *testing.T) {
@@ -271,6 +274,35 @@ func TestForwardGrokChatViaResponsesNonStreamingCachesAndReturnsChat(t *testing.
 	require.Equal(t, "cached ok", gjson.Get(recorder.Body.String(), "choices.0.message.content").String())
 	require.Equal(t, int64(9856), gjson.Get(recorder.Body.String(), "usage.prompt_tokens_details.cached_tokens").Int())
 	require.NotNil(t, repo.updates[account.ID][grokQuotaSnapshotExtraKey])
+}
+
+func TestForwardGrok46ChatViaResponsesPreservesModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body := []byte(`{"model":"grok-4.6","messages":[{"role":"user","content":"hi"}],"stream":false,"prompt_cache_key":"grok-46-session"}`)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, grokChatRawEndpoint, bytes.NewReader(body))
+	c.Set("api_key", &APIKey{ID: 7146})
+
+	account := grokChatBridgeTestAccount(7146)
+	repo := &grokQuotaAccountRepo{mockAccountRepoForPlatform: &mockAccountRepoForPlatform{
+		accountsByID: map[int64]*Account{account.ID: account},
+	}}
+	upstream := &httpUpstreamRecorder{resp: grokChatBridgeCompletedResponse("resp_grok_46", 0)}
+	svc := &OpenAIGatewayService{
+		httpUpstream:      upstream,
+		grokTokenProvider: NewGrokTokenProvider(repo, nil),
+		accountRepo:       repo,
+	}
+
+	result, err := svc.ForwardAsChatCompletions(context.Background(), c, account, body, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, xai.DefaultCLIBaseURL+"/responses", upstream.lastReq.URL.String())
+	require.Equal(t, "grok-4.6", gjson.GetBytes(upstream.lastBody, "model").String())
+	require.Equal(t, "grok-4.6", result.UpstreamModel)
+	require.Equal(t, grokChatResponsesEndpoint, result.UpstreamEndpoint)
 }
 
 func TestForwardGrokChatViaResponsesCodeBuddyUsesStableConversationHeader(t *testing.T) {

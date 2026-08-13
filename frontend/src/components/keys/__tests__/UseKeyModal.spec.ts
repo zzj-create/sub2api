@@ -49,6 +49,7 @@ describe('UseKeyModal', () => {
     const allCode = wrapper.findAll('pre code').map((code) => code.text()).join('\n')
     expect(allCode).toContain('GROK_MODELS_BASE_URL')
     expect(allCode).toContain('XAI_API_KEY')
+    expect(allCode).toContain('[model."grok-4.6"]')
     expect(allCode).toContain('[model."grok-4.5"]')
     expect(allCode).toContain('[model."grok-build-0.1"]')
     expect(allCode).toContain('[model."grok-4.20-multi-agent-0309"]')
@@ -69,6 +70,7 @@ describe('UseKeyModal', () => {
     expect(allCode).toContain('Keep api_backend = "responses" on every model entry.')
     expect(allCode).toContain('grok-imagine-image')
     expect(allCode).toContain('grok-imagine-edit')
+    expect(allCode).toMatch(/\[model\."grok-4\.6"\][\s\S]*?context_window = 500000/)
     expect(allCode).toMatch(/\[model\."grok-4\.5"\][\s\S]*?context_window = 500000/)
     expect(allCode).toMatch(/\[model\."grok-build-0\.1"\][\s\S]*?context_window = 256000/)
     // Prefer env_key; hardcode api_key only as commented alternative
@@ -105,6 +107,8 @@ describe('UseKeyModal', () => {
       baseURL: 'https://example.com/v1',
       apiKey: 'sk-grok-test'
     })
+    expect(parsed.provider.grok.models['grok-4.6']).toBeDefined()
+    expect(parsed.provider.grok.models['grok-4.6'].limit.context).toBe(500000)
     expect(parsed.provider.grok.models['grok-4.5']).toBeDefined()
     expect(parsed.provider.grok.models['grok-4.5'].limit.context).toBe(500000)
     expect(parsed.provider.grok.models['grok-build-0.1']).toBeDefined()
@@ -241,6 +245,7 @@ describe('UseKeyModal', () => {
     // API-key provider: Codex must not require a ChatGPT OAuth login.
     expect(configToml).toContain('requires_openai_auth = false')
     expect(configToml).toContain('supports_websockets = false')
+    expect(configToml).toContain('grok-4.6 | grok-4.5')
     expect(configToml).toContain('grok-4.20-multi-agent-0309 (text / web_search)')
     expect(configToml).toContain('grok-imagine-image')
     expect(configToml).toContain('grok-imagine-video')

@@ -363,8 +363,10 @@ func ProvideProxyPoolService(
 ) *ProxyPoolService {
 	svc := NewProxyPoolService(repo, prober, latencyCache, rdb, db)
 	svc.SetAccountStateRepository(accountRepo)
+	svc.SetAccountRepository(accountRepo)
 	if qualityRepo, ok := repo.(ProxyPoolQualityRepository); ok {
 		svc.SetQualityProber(NewGrokEgressQualityProber(accountRepo, qualityRepo, grokTokenProvider, httpUpstream, cfg))
+		svc.SetSSOQualityProber(NewGrokSSOQualityProber(httpUpstream))
 	}
 	if openAIGateway != nil {
 		openAIGateway.SetProxyPoolQualityObserver(svc)

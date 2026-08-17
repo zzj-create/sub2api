@@ -331,7 +331,7 @@ func TestGrokSSOImportCredentialsPreservesRequestedBaseURL(t *testing.T) {
 		"header_overrides":        map[string]any{"x-relay-key": "k"},
 	}
 
-	credentials := grokSSOImportCredentials(built, reqCredentials)
+	credentials := grokSSOImportCredentials(built, reqCredentials, "import-sso")
 
 	// token 字段以兑换结果为准；base_url 是运营侧配置，必须保留请求里的自定义地址
 	require.Equal(t, "at-1", credentials["access_token"])
@@ -342,19 +342,26 @@ func TestGrokSSOImportCredentialsPreservesRequestedBaseURL(t *testing.T) {
 	require.Equal(t, "https://relay.example.com/v1", reqCredentials["base_url"])
 }
 
+func TestGrokSSOImportCredentialsStoresAuthoritativeSSO(t *testing.T) {
+	built := map[string]any{"access_token": "at-1"}
+	credentials := grokSSOImportCredentials(built, map[string]any{"sso": "untrusted"}, "  import-sso  ")
+	require.Equal(t, "import-sso", credentials["sso"])
+	require.NotContains(t, credentials, "sso_token")
+}
+
 func TestGrokSSOImportCredentialsDefaultsToOfficialBaseURL(t *testing.T) {
 	built := map[string]any{
 		"access_token": "at-1",
 		"base_url":     xai.DefaultCLIBaseURL,
 	}
 
-	credentials := grokSSOImportCredentials(built, nil)
+	credentials := grokSSOImportCredentials(built, nil, "import-sso")
 	require.Equal(t, xai.DefaultCLIBaseURL, credentials["base_url"])
 
 	credentials = grokSSOImportCredentials(map[string]any{
 		"access_token": "at-2",
 		"base_url":     xai.DefaultCLIBaseURL,
-	}, map[string]any{"base_url": "   "})
+	}, map[string]any{"base_url": "   "}, "import-sso")
 	require.Equal(t, xai.DefaultCLIBaseURL, credentials["base_url"])
 	require.Equal(t, "at-2", credentials["access_token"])
 }

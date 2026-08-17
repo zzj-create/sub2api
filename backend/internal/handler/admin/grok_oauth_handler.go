@@ -426,7 +426,7 @@ func (h *GrokOAuthHandler) createAccountFromSSOToken(ctx context.Context, req Gr
 		return grokSSOImportWorkerResult{item: GrokSSOToOAuthItemResult{Index: index, Error: grokSSOImportErrorMessage(err)}}
 	}
 
-	credentials := grokSSOImportCredentials(h.grokOAuthService.BuildAccountCredentials(tokenInfo), req.Credentials)
+	credentials := grokSSOImportCredentials(h.grokOAuthService.BuildAccountCredentials(tokenInfo), req.Credentials, token)
 	name := grokSSOImportAccountName(req.Name, tokenInfo, index, total)
 	expiresAt, autoPauseOnExpired := grokSSOImportExpiry(req.ExpiresAt, req.AutoPauseOnExpired, tokenInfo)
 	account, err := h.adminService.CreateAccount(ctx, &service.CreateAccountInput{
@@ -464,7 +464,7 @@ func (h *GrokOAuthHandler) createAccountFromSSOToken(ctx context.Context, req Gr
 // token 字段以 BuildAccountCredentials 为准（请求不可覆盖）；但 base_url 是运营侧
 // 配置且 Build 恒写官方地址，会吞掉导入时指定的自定义转发地址——与
 // RefreshAccountToken 的保留逻辑对齐，请求显式提供时以请求为准。
-func grokSSOImportCredentials(built map[string]any, reqCredentials map[string]any) map[string]any {
+func grokSSOImportCredentials(built map[string]any, reqCredentials map[string]any, ssoToken string) map[string]any {
 	// Only merge operator config from the request — never free-form secrets
 	// (password / sso_token / cookie / etc.) into stored credentials.
 	allowedReqKeys := map[string]struct{}{
@@ -495,6 +495,11 @@ func grokSSOImportCredentials(built map[string]any, reqCredentials map[string]an
 	}
 	if reqBaseURL, ok := reqCredentials["base_url"].(string); ok && strings.TrimSpace(reqBaseURL) != "" {
 		credentials["base_url"] = strings.TrimSpace(reqBaseURL)
+	}
+	// Preserve the exact token accepted by this import job. Request-provided
+	// free-form values remain discarded; this value is authoritative.
+	if token := strings.TrimSpace(ssoToken); token != "" {
+		credentials["sso"] = token
 	}
 	return service.SanitizeStoredCredentials(service.PlatformGrok, credentials)
 }

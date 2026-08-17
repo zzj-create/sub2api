@@ -1232,6 +1232,14 @@ export interface GrokAccountQualitySnapshot {
   error_kind?: string
   http_status?: number | null
   observed_at: string
+  sso_state?: 'clean' | 'flagged_account' | 'flagged_ip' | 'error' | 'unknown' | string
+  sso_reason?: string
+  sso_bot_flag_source?: number | null
+  sso_risk?: number | null
+  sso_policy?: string
+  sso_event?: string
+  sso_http_status?: number | null
+  sso_checked_at?: string | null
 }
 
 export interface Account {

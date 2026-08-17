@@ -955,6 +955,93 @@ func (r *proxyPoolRepository) ListGrokProbeAccountIDs(ctx context.Context, poolI
 	return scanInt64Rows(rows)
 }
 
+// ListGrokSSOQualityAccountIDs returns non-deleted Grok OAuth accounts in a
+// pool that have a stored SSO cookie and a concrete proxy assignment. Unlike
+// the real-model probe, risk scanning intentionally includes disabled/error
+// accounts so an operator can observe degradation before re-enabling them.
+func (r *proxyPoolRepository) ListGrokSSOQualityAccountIDs(ctx context.Context, poolID int64, limit int) ([]int64, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("proxy pool repository unavailable")
+	}
+	if limit <= 0 || limit > 10000 {
+		limit = 10000
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT a.id
+		FROM accounts a
+		JOIN proxies p ON p.id = a.proxy_id
+			AND p.deleted_at IS NULL
+			AND p.pool_id = a.pool_id
+		LEFT JOIN proxy_pool_account_quality_snapshots q ON q.account_id = a.id
+		WHERE a.pool_id = $1
+			AND a.deleted_at IS NULL
+			AND a.platform = $2
+			AND a.type = 'oauth'
+			AND a.credentials ? 'sso'
+		ORDER BY q.sso_checked_at NULLS FIRST, a.id ASC
+		LIMIT $3
+	`, poolID, service.PlatformGrok, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanInt64Rows(rows)
+}
+
+// UpsertAccountSSOQualitySnapshot updates only the SSO risk columns. Model
+// throughput fields remain owned by the active/passive quality guard.
+func (r *proxyPoolRepository) UpsertAccountSSOQualitySnapshot(ctx context.Context, snapshot service.ProxyPoolAccountQualitySnapshot) error {
+	if r == nil || r.db == nil || snapshot.AccountID <= 0 || snapshot.PoolID <= 0 || snapshot.ProxyID <= 0 {
+		return errors.New("invalid account SSO quality snapshot")
+	}
+	checkedAt := snapshot.SSOCheckedAt
+	if checkedAt == nil || checkedAt.IsZero() {
+		now := time.Now().UTC()
+		checkedAt = &now
+	}
+	state := strings.TrimSpace(snapshot.SSOState)
+	if state == "" {
+		state = service.ProxyPoolQualityUnknown
+	}
+	var botFlagSource any
+	if snapshot.SSOBotFlagSource != nil {
+		botFlagSource = *snapshot.SSOBotFlagSource
+	}
+	var risk any
+	if snapshot.SSORisk != nil {
+		risk = *snapshot.SSORisk
+	}
+	var httpStatus any
+	if snapshot.SSOHTTPStatus != nil {
+		httpStatus = *snapshot.SSOHTTPStatus
+	}
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO proxy_pool_account_quality_snapshots (
+			account_id, pool_id, proxy_id, quality_class, source, reason,
+			observed_at, updated_at, sso_state, sso_reason, sso_bot_flag_source,
+			sso_risk, sso_policy, sso_event, sso_http_status, sso_checked_at
+		) VALUES (
+			$1, $2, $3, 'unknown', 'sso', $4, $5, NOW(), $6, $7, $8,
+			$9, $10, $11, $12, $5
+		)
+		ON CONFLICT (account_id) DO UPDATE SET
+			sso_state = EXCLUDED.sso_state,
+			sso_reason = EXCLUDED.sso_reason,
+			sso_bot_flag_source = EXCLUDED.sso_bot_flag_source,
+			sso_risk = EXCLUDED.sso_risk,
+			sso_policy = EXCLUDED.sso_policy,
+			sso_event = EXCLUDED.sso_event,
+			sso_http_status = EXCLUDED.sso_http_status,
+			sso_checked_at = EXCLUDED.sso_checked_at,
+			updated_at = NOW()
+		WHERE proxy_pool_account_quality_snapshots.sso_checked_at IS NULL
+			OR proxy_pool_account_quality_snapshots.sso_checked_at <= EXCLUDED.sso_checked_at
+	`, snapshot.AccountID, snapshot.PoolID, snapshot.ProxyID, snapshot.SSOReason,
+		*checkedAt, state, snapshot.SSOReason, botFlagSource, risk,
+		strings.TrimSpace(snapshot.SSOPolicy), strings.TrimSpace(snapshot.SSOEvent), httpStatus)
+	return err
+}
+
 // UpsertAccountQualitySnapshot stores the latest observation for one account.
 // The timestamp guard prevents a slower concurrent probe from replacing a
 // newer result that completed first.
@@ -1024,7 +1111,11 @@ func (r *proxyPoolRepository) ListAccountQualitySnapshots(ctx context.Context, a
 		       q.proxy_id, COALESCE(p.name, ''), q.quality_class,
 		       q.output_tps, q.output_tokens, q.duration_ms, q.first_token_ms,
 		       q.has_thinking, q.source, COALESCE(q.reason, ''),
-		       COALESCE(q.error_kind, ''), q.http_status, q.observed_at
+		       COALESCE(q.error_kind, ''), q.http_status, q.observed_at,
+		       COALESCE(q.sso_state, ''), COALESCE(q.sso_reason, ''),
+		       q.sso_bot_flag_source, q.sso_risk,
+		       COALESCE(q.sso_policy, ''), COALESCE(q.sso_event, ''),
+		       q.sso_http_status, q.sso_checked_at
 		FROM proxy_pool_account_quality_snapshots q
 		LEFT JOIN proxy_pools pp ON pp.id = q.pool_id
 		LEFT JOIN proxies p ON p.id = q.proxy_id
@@ -1044,11 +1135,19 @@ func (r *proxyPoolRepository) ListAccountQualitySnapshots(ctx context.Context, a
 			source, reason, errorKind              string
 			httpStatus                             sql.NullInt64
 			observedAt                             time.Time
+			ssoState, ssoReason                    string
+			ssoBotFlagSource                       sql.NullInt64
+			ssoRisk                                sql.NullFloat64
+			ssoPolicy, ssoEvent                    string
+			ssoHTTPStatus                          sql.NullInt64
+			ssoCheckedAt                           sql.NullTime
 		)
 		if err := rows.Scan(
 			&accountID, &poolID, &poolName, &proxyID, &proxyName, &qualityClass,
 			&outputTPS, &outputTokens, &durationMs, &firstTokenMs, &hasThinking,
 			&source, &reason, &errorKind, &httpStatus, &observedAt,
+			&ssoState, &ssoReason, &ssoBotFlagSource, &ssoRisk,
+			&ssoPolicy, &ssoEvent, &ssoHTTPStatus, &ssoCheckedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1058,6 +1157,26 @@ func (r *proxyPoolRepository) ListAccountQualitySnapshots(ctx context.Context, a
 			OutputTPS: outputTPS, OutputTokens: outputTokens, DurationMs: durationMs,
 			FirstTokenMs: firstTokenMs, Source: source, Reason: reason,
 			ErrorKind: errorKind, ObservedAt: observedAt,
+		}
+		snapshot.SSOState = ssoState
+		snapshot.SSOReason = ssoReason
+		snapshot.SSOPolicy = ssoPolicy
+		snapshot.SSOEvent = ssoEvent
+		if ssoBotFlagSource.Valid {
+			value := int(ssoBotFlagSource.Int64)
+			snapshot.SSOBotFlagSource = &value
+		}
+		if ssoRisk.Valid {
+			value := ssoRisk.Float64
+			snapshot.SSORisk = &value
+		}
+		if ssoHTTPStatus.Valid {
+			value := int(ssoHTTPStatus.Int64)
+			snapshot.SSOHTTPStatus = &value
+		}
+		if ssoCheckedAt.Valid {
+			value := ssoCheckedAt.Time.UTC()
+			snapshot.SSOCheckedAt = &value
 		}
 		if hasThinking.Valid {
 			value := hasThinking.Bool

@@ -158,10 +158,14 @@ func TestProxyPoolRepositoryListsAccountQualitySnapshots(t *testing.T) {
 			"account_id", "pool_id", "pool_name", "proxy_id", "proxy_name", "quality_class",
 			"output_tps", "output_tokens", "duration_ms", "first_token_ms", "has_thinking",
 			"source", "reason", "error_kind", "http_status", "observed_at",
+			"sso_state", "sso_reason", "sso_bot_flag_source", "sso_risk",
+			"sso_policy", "sso_event", "sso_http_status", "sso_checked_at",
 		}).AddRow(
 			int64(42), int64(7), "Grok pool", int64(9), "TN exit", service.ProxyPoolQualityHealthy,
 			float64(123.5), int64(64), int64(2000), int64(250), true,
 			"passive", "quality observation recorded", "", 200, observedAt,
+			service.GrokSSOQualityClean, "botFlagSource=0", 0, 0.10,
+			"allow", "$login", 200, observedAt,
 		))
 
 	repo := NewProxyPoolRepository(db)
@@ -179,6 +183,66 @@ func TestProxyPoolRepositoryListsAccountQualitySnapshots(t *testing.T) {
 	require.True(t, *snapshot.HasThinking)
 	require.NotNil(t, snapshot.HTTPStatus)
 	require.Equal(t, 200, *snapshot.HTTPStatus)
+	require.Equal(t, service.GrokSSOQualityClean, snapshot.SSOState)
+	require.NotNil(t, snapshot.SSOBotFlagSource)
+	require.Equal(t, 0, *snapshot.SSOBotFlagSource)
+	require.NotNil(t, snapshot.SSORisk)
+	require.InDelta(t, 0.10, *snapshot.SSORisk, 0.0001)
+	require.Equal(t, "allow", snapshot.SSOPolicy)
+	require.Equal(t, "$login", snapshot.SSOEvent)
+	require.NotNil(t, snapshot.SSOHTTPStatus)
+	require.Equal(t, 200, *snapshot.SSOHTTPStatus)
+	require.NotNil(t, snapshot.SSOCheckedAt)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProxyPoolRepositoryListsGrokSSOQualityAccountIDs(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	mock.ExpectQuery(`SELECT a\.id[\s\S]+a\.credentials \? 'sso'[\s\S]+ORDER BY q\.sso_checked_at`).
+		WithArgs(int64(14), service.PlatformGrok, 10000).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(42)).AddRow(int64(43)))
+
+	repo := NewProxyPoolRepository(db)
+	ssoRepo, ok := repo.(service.ProxyPoolSSOQualityRepository)
+	require.True(t, ok)
+	ids, err := ssoRepo.ListGrokSSOQualityAccountIDs(context.Background(), 14, 0)
+
+	require.NoError(t, err)
+	require.Equal(t, []int64{42, 43}, ids)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestProxyPoolRepositoryUpsertsAccountSSOQualitySnapshot(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	checkedAt := time.Now().UTC()
+	botFlag := 2
+	risk := 0.95
+	httpStatus := 200
+	mock.ExpectExec("INSERT INTO proxy_pool_account_quality_snapshots").
+		WithArgs(
+			int64(42), int64(14), int64(9), "eapi IP farm", checkedAt,
+			service.GrokSSOQualityFlaggedIP, "eapi IP farm", botFlag, risk,
+			"deny", "$registration", httpStatus,
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	repo := NewProxyPoolRepository(db)
+	ssoRepo, ok := repo.(service.ProxyPoolSSOQualityRepository)
+	require.True(t, ok)
+	err = ssoRepo.UpsertAccountSSOQualitySnapshot(context.Background(), service.ProxyPoolAccountQualitySnapshot{
+		AccountID: 42, PoolID: 14, ProxyID: 9,
+		SSOState: service.GrokSSOQualityFlaggedIP, SSOReason: "eapi IP farm",
+		SSOBotFlagSource: &botFlag, SSORisk: &risk, SSOPolicy: "deny",
+		SSOEvent: "$registration", SSOHTTPStatus: &httpStatus, SSOCheckedAt: &checkedAt,
+	})
+
+	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

@@ -23,7 +23,10 @@ type ProxyPoolService struct {
 	qualityRepo          ProxyPoolQualityRepository
 	accountQualityRepo   ProxyPoolAccountQualityRepository
 	qualityProbe         ProxyPoolQualityProber
+	accountRepo          AccountRepository
 	accountState         ProxyPoolAccountStateRepository
+	ssoQualityRepo       ProxyPoolSSOQualityRepository
+	ssoQualityProber     ProxyPoolSSOQualityProber
 	latencyCache         ProxyLatencyCache
 	rdb                  *redis.Client
 	db                   *sql.DB
@@ -33,6 +36,7 @@ type ProxyPoolService struct {
 	wg                   sync.WaitGroup
 	poolRuns             sync.Map
 	bindRuns             sync.Map
+	ssoRuns              sync.Map
 	accountQualityWrites sync.Map
 }
 
@@ -58,12 +62,14 @@ func NewProxyPoolService(repo ProxyPoolRepository, prober ProxyExitInfoProber, l
 	grokProber, _ := prober.(ProxyGrokQualityProber)
 	qualityRepo, _ := repo.(ProxyPoolQualityRepository)
 	accountQualityRepo, _ := repo.(ProxyPoolAccountQualityRepository)
+	ssoQualityRepo, _ := repo.(ProxyPoolSSOQualityRepository)
 	return &ProxyPoolService{
 		repo:               repo,
 		prober:             prober,
 		grokProber:         grokProber,
 		qualityRepo:        qualityRepo,
 		accountQualityRepo: accountQualityRepo,
+		ssoQualityRepo:     ssoQualityRepo,
 		latencyCache:       latencyCache,
 		rdb:                rdb,
 		db:                 db,
@@ -88,6 +94,15 @@ func (s *ProxyPoolService) ListAccountQualitySnapshots(ctx context.Context, acco
 		return map[int64]*ProxyPoolAccountQualitySnapshot{}, nil
 	}
 	return s.accountQualityRepo.ListAccountQualitySnapshots(ctx, accountIDs)
+}
+
+// SetAccountRepository attaches the full loader needed by account-scoped SSO
+// quality scans without broadening the older account-state test contracts.
+func (s *ProxyPoolService) SetAccountRepository(repo AccountRepository) {
+	if s == nil {
+		return
+	}
+	s.accountRepo = repo
 }
 
 // SetQualityProber attaches the real-model Grok egress probe after the

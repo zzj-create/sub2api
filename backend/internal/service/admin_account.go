@@ -495,7 +495,8 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	if err := NormalizeHeaderOverrideCredentials(input.Credentials); err != nil {
 		return nil, err
 	}
-	// Never persist ephemeral SSO/password secrets after OAuth conversion.
+	// Normalize ephemeral secrets after OAuth conversion. Grok SSO is retained
+	// deliberately for the account-risk quality probe.
 	input.Credentials = SanitizeStoredCredentials(input.Platform, input.Credentials)
 
 	account, err := buildAccountForCreate(input, accountExtra)
@@ -607,7 +608,7 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		if err := NormalizeHeaderOverrideCredentials(account.Credentials); err != nil {
 			return nil, err
 		}
-		// Strip SSO/password residue that must never sit next to OAuth tokens.
+		// Strip password/transient SSO variants; retain Grok SSO when valid.
 		account.Credentials = SanitizeStoredCredentials(account.Platform, account.Credentials)
 	}
 	// Extra 使用 map：需要区分“未提供(nil)”与“显式清空({})”。

@@ -271,6 +271,15 @@ type ProxyPoolAccountQualitySnapshot struct {
 	ErrorKind    string    `json:"error_kind,omitempty"`
 	HTTPStatus   *int      `json:"http_status,omitempty"`
 	ObservedAt   time.Time `json:"observed_at"`
+
+	SSOState         string     `json:"sso_state,omitempty"`
+	SSOReason        string     `json:"sso_reason,omitempty"`
+	SSOBotFlagSource *int       `json:"sso_bot_flag_source,omitempty"`
+	SSORisk          *float64   `json:"sso_risk,omitempty"`
+	SSOPolicy        string     `json:"sso_policy,omitempty"`
+	SSOEvent         string     `json:"sso_event,omitempty"`
+	SSOHTTPStatus    *int       `json:"sso_http_status,omitempty"`
+	SSOCheckedAt     *time.Time `json:"sso_checked_at,omitempty"`
 }
 
 // ProxyPoolAccountQualityRepository persists and reads account-scoped
@@ -279,6 +288,32 @@ type ProxyPoolAccountQualitySnapshot struct {
 type ProxyPoolAccountQualityRepository interface {
 	UpsertAccountQualitySnapshot(ctx context.Context, snapshot ProxyPoolAccountQualitySnapshot) error
 	ListAccountQualitySnapshots(ctx context.Context, accountIDs []int64) (map[int64]*ProxyPoolAccountQualitySnapshot, error)
+}
+
+// GrokSSOQualityResult is the normalized account-risk result parsed from the
+// Grok web session. It contains no credential material.
+type GrokSSOQualityResult struct {
+	State         string
+	Reason        string
+	BotFlagSource *int
+	Risk          *float64
+	Policy        string
+	Event         string
+	HTTPStatus    *int
+	CheckedAt     time.Time
+}
+
+// ProxyPoolSSOQualityRepository selects Grok OAuth accounts whose imported SSO
+// cookie can drive a native risk-state scan.
+type ProxyPoolSSOQualityRepository interface {
+	ListGrokSSOQualityAccountIDs(ctx context.Context, poolID int64, limit int) ([]int64, error)
+	UpsertAccountSSOQualitySnapshot(ctx context.Context, snapshot ProxyPoolAccountQualitySnapshot) error
+}
+
+// ProxyPoolSSOQualityProber reads Grok account risk state with the stored SSO
+// cookie through a specified pool egress.
+type ProxyPoolSSOQualityProber interface {
+	ProbeGrokSSOQuality(ctx context.Context, account *Account, proxyURL string) GrokSSOQualityResult
 }
 
 // ProxyPoolAccountQualityReader is the read-only view consumed by the admin

@@ -236,7 +236,8 @@ func (s *GrokOAuthService) ValidateRefreshToken(ctx context.Context, refreshToke
 }
 
 // ValidateSSOToken converts a Web SSO cookie into Build OAuth tokens.
-// The raw sso_token is never stored on GrokTokenInfo or account credentials.
+// The raw sso_token is never stored on GrokTokenInfo; the import handler may
+// persist it separately as account credentials["sso"].
 func (s *GrokOAuthService) ValidateSSOToken(ctx context.Context, ssoToken string, proxyID *int64) (*GrokTokenInfo, error) {
 	ssoToken = strings.TrimSpace(ssoToken)
 	if ssoToken == "" {
@@ -265,7 +266,7 @@ func (s *GrokOAuthService) ConvertFromSSO(ctx context.Context, ssoToken string, 
 }
 
 // AuthorizePassword logs in with email/password, converts the resulting SSO cookie
-// to Build OAuth, and returns OAuth tokens only. Password and raw SSO are never persisted.
+// to Build OAuth, and returns OAuth tokens only. Password is never persisted.
 func (s *GrokOAuthService) AuthorizePassword(ctx context.Context, email, password string, proxyID *int64) (*GrokTokenInfo, error) {
 	if !s.passwordAuthEnabled() {
 		return nil, infraerrors.New(http.StatusForbidden, "GROK_OAUTH_PASSWORD_AUTH_DISABLED", "Grok password authorization is disabled")

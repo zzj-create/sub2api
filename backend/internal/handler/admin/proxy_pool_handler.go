@@ -312,6 +312,22 @@ func (h *ProxyPoolHandler) Rebind(c *gin.Context) {
 	})
 }
 
+// CheckSSOQuality starts a background Grok account-risk scan for every pool
+// account that has a stored SSO cookie. The route returns immediately; results
+// are surfaced through the account quality snapshots.
+func (h *ProxyPoolHandler) CheckSSOQuality(c *gin.Context) {
+	id, ok := parseProxyPoolID(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.StartSSOQualityCheck(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
 func (h *ProxyPoolHandler) RebindLogs(c *gin.Context) {
 	id, ok := parseProxyPoolID(c)
 	if !ok {

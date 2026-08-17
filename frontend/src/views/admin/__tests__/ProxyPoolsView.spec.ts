@@ -16,6 +16,7 @@ const {
   removeProxies,
   rebindLogs,
   rebind,
+  checkSSOQuality,
   showError,
   showSuccess
 } = vi.hoisted(() => ({
@@ -30,6 +31,7 @@ const {
   removeProxies: vi.fn(),
   rebindLogs: vi.fn(),
   rebind: vi.fn(),
+  checkSSOQuality: vi.fn(),
   showError: vi.fn(),
   showSuccess: vi.fn()
 }))
@@ -41,6 +43,7 @@ vi.mock('@/api/admin', () => ({
       listProxies,
       rebindLogs,
       rebind,
+      checkSSOQuality,
       create: vi.fn(),
       update: vi.fn(),
       remove: vi.fn(),
@@ -189,6 +192,7 @@ describe('ProxyPoolsView', () => {
     bindGroups.mockResolvedValue({ bound_groups: 0, synced_accounts: 0 })
     unbindGroups.mockResolvedValue({ unbound_groups: 1, detached_accounts: 0 })
     rebind.mockResolvedValue({ started: true, already_running: false })
+    checkSSOQuality.mockResolvedValue({ started: true, already_running: false, account_count: 12 })
     getAllProxies.mockResolvedValue([
       { id: 11, name: 'exit-a', host: 'proxy.example', port: 8080 },
       { id: 12, name: 'exit-b', host: 'proxy-b.example', port: 8081 },
@@ -310,6 +314,20 @@ describe('ProxyPoolsView', () => {
     expect(rebind).toHaveBeenCalledWith(1)
     expect(listProxies).toHaveBeenCalledTimes(2)
     expect(showSuccess).toHaveBeenCalledWith('admin.proxyPools.checkStarted')
+  })
+
+  it('starts an SSO risk scan from the pool detail', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+    await wrapper.get('button[title="admin.proxyPools.details"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="run-sso-quality"]').trigger('click')
+    await flushPromises()
+
+    expect(checkSSOQuality).toHaveBeenCalledWith(1)
+    expect(showSuccess).toHaveBeenCalledWith('admin.proxyPools.ssoQualityStarted')
+    expect(showError).not.toHaveBeenCalled()
   })
 
   it('treats an existing background health check as an idempotent success', async () => {

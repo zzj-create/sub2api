@@ -522,6 +522,7 @@ func registerProxyPoolRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		pools.POST("/:id/accounts", h.Admin.ProxyPool.BindAccounts)
 		pools.DELETE("/:id/accounts", h.Admin.ProxyPool.UnbindAccounts)
 		pools.POST("/:id/rebind", h.Admin.ProxyPool.Rebind)
+		pools.POST("/:id/sso-quality-check", h.Admin.ProxyPool.CheckSSOQuality)
 		pools.GET("/:id/rebind-logs", h.Admin.ProxyPool.RebindLogs)
 	}
 }

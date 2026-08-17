@@ -62,6 +62,51 @@ describe('AccountQualityCell', () => {
     wrapper.unmount()
   })
 
+  it('shows the SSO risk result beside model quality', async () => {
+    const botFlag = 2
+    const risk = 0.95
+    const httpStatus = 200
+    const account = {
+      id: 44,
+      platform: 'grok',
+      type: 'oauth',
+      grok_quality: {
+        account_id: 44,
+        pool_id: 7,
+        proxy_id: 9,
+        quality_class: 'unknown',
+        output_tps: 0,
+        output_tokens: 0,
+        duration_ms: 0,
+        first_token_ms: 0,
+        source: 'sso',
+        observed_at: '2026-08-07T05:00:00Z',
+        sso_state: 'flagged_ip',
+        sso_reason: 'eapi_ip_bot_farm free-tier',
+        sso_bot_flag_source: botFlag,
+        sso_risk: risk,
+        sso_policy: 'free-tier',
+        sso_event: '',
+        sso_http_status: httpStatus,
+        sso_checked_at: '2026-08-17T05:00:00Z'
+      }
+    } as Account
+
+    const wrapper = mount(AccountQualityCell, {
+      props: { account },
+      attachTo: document.body
+    })
+
+    expect(wrapper.get('[data-test="account-sso-quality-state"]').text()).toContain('flagged_ip')
+    await wrapper.get('[data-test="account-quality-trigger"]').trigger('click')
+    const details = document.body.querySelector('[data-test="account-quality-details"]')
+    expect(details?.textContent).toContain('eapi_ip_bot_farm free-tier')
+    expect(details?.textContent).toContain('95%')
+    expect(details?.textContent).toContain('formatted:2026-08-17T05:00:00Z')
+
+    wrapper.unmount()
+  })
+
   it('makes an unobserved Grok account explicit', () => {
     const wrapper = mount(AccountQualityCell, {
       props: {

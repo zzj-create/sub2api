@@ -1480,7 +1480,8 @@ func (h *AccountHandler) ApplyOAuthCredentials(c *gin.Context) {
 		return
 	}
 
-	// Drop SSO/password residue; re-auth must leave only OAuth tokens on disk.
+	// Drop password residue; Grok SSO is retained by the platform-aware sanitizer
+	// for native risk checks and remains redacted in API responses.
 	req.Credentials = service.SanitizeStoredCredentials(existing.Platform, req.Credentials)
 
 	updatedAccount, err := h.adminService.UpdateAccount(ctx, accountID, &service.UpdateAccountInput{

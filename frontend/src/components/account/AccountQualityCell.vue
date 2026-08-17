@@ -36,6 +36,32 @@ const statusLabel = (value: string): string => {
   return translated === key ? value : translated
 }
 
+const ssoStatusClass = (value?: string): string => {
+  switch (value) {
+    case 'clean':
+      return 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/25 dark:text-emerald-300'
+    case 'flagged_ip':
+      return 'bg-amber-50 text-amber-700 dark:bg-amber-900/25 dark:text-amber-300'
+    case 'flagged_account':
+    case 'error':
+      return 'bg-red-50 text-red-700 dark:bg-red-900/25 dark:text-red-300'
+    default:
+      return 'bg-gray-100 text-gray-500 dark:bg-dark-700 dark:text-gray-400'
+  }
+}
+
+const ssoStatusLabel = (value?: string): string => {
+  if (!value) return '-'
+  const key = `admin.accounts.grokQuality.ssoStatus.${value}`
+  const translated = t(key)
+  return translated === key ? value : translated
+}
+
+const formatRisk = (value: number | null | undefined): string => {
+  if (value == null || !Number.isFinite(Number(value))) return '-'
+  return Number(value).toLocaleString(undefined, { style: 'percent', minimumFractionDigits: 0, maximumFractionDigits: 2 })
+}
+
 const sourceLabel = (value: string): string => {
   const key = `admin.accounts.grokQuality.source.${value}`
   const translated = t(key)
@@ -76,6 +102,13 @@ const formatMilliseconds = (value: number | null | undefined): string => {
         <span v-if="snapshot.output_tps > 0" class="font-mono text-xs text-gray-700 dark:text-gray-200">
           {{ formatTPS(snapshot.output_tps) }}
         </span>
+        <span
+          v-if="snapshot.sso_state"
+          :class="['inline-flex rounded px-1.5 py-0.5 text-[11px] font-medium', ssoStatusClass(snapshot.sso_state)]"
+          data-test="account-sso-quality-state"
+        >
+          {{ ssoStatusLabel(snapshot.sso_state) }}
+        </span>
         <Icon name="infoCircle" size="xs" class="shrink-0 text-gray-400" />
       </button>
     </template>
@@ -102,6 +135,18 @@ const formatMilliseconds = (value: number | null | undefined): string => {
         </dd>
         <dt class="text-gray-300">{{ t('admin.accounts.grokQuality.sourceLabel') }}</dt>
         <dd class="text-right">{{ sourceLabel(snapshot.source) }}</dd>
+        <template v-if="snapshot.sso_state">
+          <dt class="text-gray-300">{{ t('admin.accounts.grokQuality.sso.status') }}</dt>
+          <dd class="text-right">{{ ssoStatusLabel(snapshot.sso_state) }}</dd>
+          <dt class="text-gray-300">{{ t('admin.accounts.grokQuality.sso.botFlagSource') }}</dt>
+          <dd class="text-right font-mono">{{ snapshot.sso_bot_flag_source ?? '-' }}</dd>
+          <dt class="text-gray-300">{{ t('admin.accounts.grokQuality.sso.risk') }}</dt>
+          <dd class="text-right font-mono">{{ formatRisk(snapshot.sso_risk) }}</dd>
+          <dt class="text-gray-300">{{ t('admin.accounts.grokQuality.sso.policy') }}</dt>
+          <dd class="text-right">{{ snapshot.sso_policy || '-' }}</dd>
+          <dt class="text-gray-300">{{ t('admin.accounts.grokQuality.sso.checkedAt') }}</dt>
+          <dd class="text-right">{{ formatDateTime(snapshot.sso_checked_at) || '-' }}</dd>
+        </template>
         <dt class="text-gray-300">{{ t('admin.accounts.grokQuality.observedAt') }}</dt>
         <dd class="text-right">{{ formatDateTime(snapshot.observed_at) || '-' }}</dd>
         <dt class="text-gray-300">{{ t('admin.accounts.grokQuality.pool') }}</dt>
@@ -115,6 +160,13 @@ const formatMilliseconds = (value: number | null | undefined): string => {
       </dl>
       <p v-if="snapshot.reason" class="break-words border-t border-white/15 pt-2 text-gray-300" data-test="account-quality-reason">
         {{ snapshot.reason }}
+      </p>
+      <p
+        v-if="snapshot.sso_reason"
+        class="break-words border-t border-white/15 pt-2 text-gray-300"
+        data-test="account-sso-quality-reason"
+      >
+        {{ snapshot.sso_reason }}
       </p>
     </div>
   </HelpTooltip>

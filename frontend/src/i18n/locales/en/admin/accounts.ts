@@ -203,6 +203,20 @@ export default {
           ignored: 'Ignored',
           unknown: 'Unknown'
         },
+        sso: {
+          status: 'SSO risk',
+          botFlagSource: 'botFlagSource',
+          risk: 'Risk',
+          policy: 'Policy',
+          checkedAt: 'SSO checked at'
+        },
+        ssoStatus: {
+          clean: 'SSO clean',
+          flagged_account: 'Account flagged',
+          flagged_ip: 'IP soft-flagged',
+          error: 'SSO error',
+          unknown: 'SSO unknown'
+        },
         source: {
           active: 'Active probe',
           passive: 'Live request'

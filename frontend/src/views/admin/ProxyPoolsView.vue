@@ -233,6 +233,10 @@
               <Icon name="refresh" size="sm" class="mr-2" :class="rebinding ? 'animate-spin' : ''" />
               {{ t('admin.proxyPools.checkNow') }}
             </button>
+            <button class="btn btn-secondary btn-sm" :disabled="ssoChecking" data-test="run-sso-quality" @click="runSSOQualityCheck">
+              <Icon name="shield" size="sm" class="mr-2" :class="ssoChecking ? 'animate-pulse' : ''" />
+              {{ t('admin.proxyPools.ssoQualityCheck') }}
+            </button>
             <button class="btn btn-primary btn-sm" @click="openAssign">
               <Icon name="plus" size="sm" class="mr-2" />{{ t('admin.proxyPools.addProxies') }}
             </button>
@@ -504,6 +508,7 @@ const boundGroups = ref<ProxyPoolGroup[]>([])
 const groupOptions = ref<ProxyPoolGroup[]>([])
 const logs = ref<ProxyPoolRebindLog[]>([])
 const rebinding = ref(false)
+const ssoChecking = ref(false)
 const showAssign = ref(false)
 const assigning = ref(false)
 const allProxies = ref<Proxy[]>([])
@@ -675,6 +680,25 @@ async function openDetail(pool: ProxyPoolWithStats) {
   }
 }
 function closeDetail() { detailPool.value = null; detailProxies.value = []; boundGroups.value = []; groupOptions.value = []; logs.value = []; memberSearch.value = ''; memberStatusFilter.value = 'all'; selectedMemberProxyIds.value = new Set(); selectedGroupIds.value = new Set(); groupSearch.value = ''; showBindGroups.value = false; showBatchRemoveDialog.value = false; unbindingGroup.value = null }
+async function runSSOQualityCheck() {
+  if (!detailPool.value || ssoChecking.value) return
+  ssoChecking.value = true
+  try {
+    const result = await adminAPI.proxyPools.checkSSOQuality(detailPool.value.id)
+    if (result.already_running) {
+      appStore.showSuccess(t('admin.proxyPools.ssoQualityRunning'))
+    } else if (result.account_count === 0) {
+      appStore.showSuccess(t('admin.proxyPools.ssoQualityNoAccounts'))
+    } else {
+      appStore.showSuccess(t('admin.proxyPools.ssoQualityStarted', { count: result.account_count }))
+    }
+  } catch {
+    appStore.showError(t('admin.proxyPools.ssoQualityFailed'))
+  } finally {
+    ssoChecking.value = false
+  }
+}
+
 async function refreshDetail() {
   if (!detailPool.value) return
   const [proxies, rebindEntries, groups] = await Promise.all([adminAPI.proxyPools.listProxies(detailPool.value.id), adminAPI.proxyPools.rebindLogs(detailPool.value.id), adminAPI.proxyPools.listGroups(detailPool.value.id)])

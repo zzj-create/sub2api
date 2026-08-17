@@ -128,6 +128,19 @@ export async function rebind(id: number): Promise<{ started: boolean; already_ru
   }
 }
 
+export async function checkSSOQuality(id: number): Promise<{ started: boolean; already_running: boolean; account_count: number }> {
+  const { data } = await apiClient.post<{
+    started?: boolean
+    already_running?: boolean
+    account_count?: number
+  }>(`/admin/proxy-pools/${id}/sso-quality-check`)
+  return {
+    started: data.started === true,
+    already_running: data.already_running === true,
+    account_count: data.account_count ?? 0
+  }
+}
+
 export async function rebindLogs(id: number, limit = 50): Promise<ProxyPoolRebindLog[]> {
   const { data } = await apiClient.get<ProxyPoolRebindLog[]>(`/admin/proxy-pools/${id}/rebind-logs`, { params: { limit } })
   return data
@@ -149,5 +162,6 @@ export default {
   bindAccounts,
   unbindAccounts,
   rebind,
+  checkSSOQuality,
   rebindLogs
 }

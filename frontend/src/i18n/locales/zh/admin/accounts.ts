@@ -149,6 +149,20 @@ export default {
           ignored: '已忽略',
           unknown: '未知'
         },
+        sso: {
+          status: 'SSO 降智状态',
+          botFlagSource: 'botFlagSource',
+          risk: '风险分',
+          policy: '策略',
+          checkedAt: 'SSO 检测时间'
+        },
+        ssoStatus: {
+          clean: 'SSO 正常',
+          flagged_account: '账号标记',
+          flagged_ip: 'IP 软标记',
+          error: 'SSO 错误',
+          unknown: 'SSO 未知'
+        },
         source: {
           active: '主动探针',
           passive: '真实请求'

@@ -174,3 +174,28 @@ func TestResponsesClientToolStreamRestorer_RawEventsPreserveUnknownFieldsAndOutp
 	require.Len(t, done, 2)
 	require.Equal(t, "pwd", done[1].Input)
 }
+
+func TestAdaptResponsesClientTools_BackfillsMissingToolSearchOutput(t *testing.T) {
+	req := map[string]any{
+		"tools": []any{map[string]any{"type": "tool_search"}},
+		"input": []any{
+			map[string]any{
+				"type":      "tool_search_output",
+				"call_id":   "search",
+				"status":    "completed",
+				"execution": "client",
+				"tools":     []any{map[string]any{"type": "namespace", "name": "browser"}},
+			},
+		},
+	}
+
+	mapping, changed, err := AdaptResponsesClientTools(req)
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.True(t, mapping.ToolSearch)
+
+	input := requireResponsesClientToolValue[[]any](t, req["input"])
+	output := requireResponsesClientToolValue[map[string]any](t, input[0])
+	require.Equal(t, "function_call_output", output["type"])
+	require.JSONEq(t, `[{"type":"namespace","name":"browser"}]`, requireResponsesClientToolValue[string](t, output["output"]))
+}

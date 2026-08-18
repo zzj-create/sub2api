@@ -188,6 +188,16 @@ func rewriteClientToolHistory(value any, adapter *ResponsesClientToolMapping) bo
 func normalizeClientToolOutput(item map[string]any) {
 	output, exists := item["output"]
 	if !exists {
+		// Codex 0.147 emits tool_search_output with a tools catalog but no
+		// output field. Once lowered to function_call_output, xAI requires a
+		// string output; preserve the catalog as JSON instead of dropping it.
+		if tools, hasTools := item["tools"]; hasTools {
+			if encoded, err := json.Marshal(tools); err == nil {
+				item["output"] = string(encoded)
+				return
+			}
+		}
+		item["output"] = ""
 		return
 	}
 	if _, ok := output.(string); ok {

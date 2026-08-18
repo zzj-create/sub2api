@@ -3511,3 +3511,26 @@ func TestBuildGrokSchedulerExtraUpdates_NilWhenNoQuotaWindows(t *testing.T) {
 	require.Nil(t, buildGrokSchedulerExtraUpdates(&xai.QuotaSnapshot{}))
 	require.Nil(t, buildGrokSchedulerExtraUpdates(nil))
 }
+
+func TestPatchGrokResponsesBodyBackfillsMissingToolSearchOutput(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "grok-4.6",
+		"tools": [{"type": "tool_search"}],
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "find a tool"}]},
+			{"type": "tool_search_call", "call_id": "search", "status": "completed", "execution": "client", "arguments": {"query": "browser"}},
+			{"type": "tool_search_output", "call_id": "search", "status": "completed", "execution": "client", "tools": [{"type": "namespace", "name": "browser"}]}
+		]
+	}`)
+
+	patched, mapping, err := patchGrokResponsesBodyWithClientTools(body, "grok-4.6")
+	require.NoError(t, err)
+	require.True(t, mapping.ToolSearch)
+
+	output := gjson.GetBytes(patched, `input.#(type=="function_call_output")`)
+	require.True(t, output.Exists())
+	require.Equal(t, "search", output.Get("call_id").String())
+	require.JSONEq(t, `[{"type":"namespace","name":"browser"}]`, output.Get("output").String())
+}

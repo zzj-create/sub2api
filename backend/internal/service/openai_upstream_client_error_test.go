@@ -161,8 +161,6 @@ func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T
 		// 404/405 可能是上游 base_url 配错（运营方问题），不当成客户端错误暴露。
 		{"not_found", http.StatusNotFound, `{"error":{"message":"Unknown request URL"}}`,
 			http.StatusBadGateway, "upstream_error", "Upstream request failed"},
-		{"unprocessable", http.StatusUnprocessableEntity, `{"error":{"message":"Invalid schema for field messages"}}`,
-			http.StatusBadGateway, "upstream_error", "Upstream request failed"},
 		// 401/402/403 是网关运营方的凭据/账单问题，必须继续对客户端屏蔽上游账号状态。
 		{"unauthorized", http.StatusUnauthorized, `{"error":{"message":"Incorrect API key provided: sk-abc"}}`,
 			http.StatusBadGateway, "upstream_error", "Upstream authentication failed, please contact administrator"},
@@ -193,6 +191,23 @@ func TestHandleErrorResponse_NonDeterministicStatusesKeepGeneric502(t *testing.T
 }
 
 // 顺序守卫：管理员配置的错误透传规则在更上游命中，新分支不得抢在它前面。
+func TestHandleErrorResponse_422PassthroughKeepsUpstreamMessage(t *testing.T) {
+	c, rec := newOpenAIUpstreamErrorTestContext(t)
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	body := `{"error":"Failed to deserialize the JSON body into the target type: data did not match any variant of untagged enum ModelInput"}`
+
+	_, err := svc.handleErrorResponse(
+		context.Background(),
+		newOpenAIUpstreamErrorResponse(http.StatusUnprocessableEntity, body),
+		c, newOpenAIUpstreamErrorTestAccount(), nil,
+	)
+
+	require.Error(t, err)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	require.Equal(t, "invalid_request_error", gjson.Get(rec.Body.String(), "error.type").String())
+	require.Contains(t, gjson.Get(rec.Body.String(), "error.message").String(), "ModelInput")
+}
+
 func TestHandleErrorResponse_PassthroughRuleStillWinsOver400Branch(t *testing.T) {
 	c, rec := newOpenAIUpstreamErrorTestContext(t)
 	ruleSvc := &ErrorPassthroughService{}
@@ -215,10 +230,11 @@ func TestHandleErrorResponse_PassthroughRuleStillWinsOver400Branch(t *testing.T)
 
 func TestIsOpenAIDeterministicClientError(t *testing.T) {
 	require.True(t, isOpenAIDeterministicClientError(http.StatusBadRequest))
+	require.True(t, isOpenAIDeterministicClientError(http.StatusUnprocessableEntity))
 	for _, status := range []int{
 		http.StatusUnauthorized, http.StatusPaymentRequired, http.StatusForbidden,
 		http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusRequestEntityTooLarge,
-		http.StatusUnprocessableEntity, http.StatusTooManyRequests,
+		http.StatusTooManyRequests,
 		http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable,
 	} {
 		require.False(t, isOpenAIDeterministicClientError(status), "status %d", status)

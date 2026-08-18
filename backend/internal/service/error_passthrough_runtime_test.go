@@ -69,9 +69,9 @@ func TestOpenAIHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {
 	c, _ := gin.CreateTestContext(rec)
 
 	svc := &OpenAIGatewayService{}
-	respBody := []byte(`{"error":{"message":"Invalid schema for field messages"}}`)
+	respBody := []byte(`{"error":{"message":"Unknown request URL"}}`)
 	resp := &http.Response{
-		StatusCode: http.StatusUnprocessableEntity,
+		StatusCode: http.StatusNotFound,
 		Body:       io.NopCloser(bytes.NewReader(respBody)),
 		Header:     http.Header{},
 	}

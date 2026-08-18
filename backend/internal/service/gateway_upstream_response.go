@@ -298,6 +298,13 @@ func extractUpstreamErrorMessage(body []byte) string {
 		return m
 	}
 
+	// xAI / ???????{"error":"..."}?error ?????????
+	if e := gjson.GetBytes(body, "error"); e.Exists() && e.Type == gjson.String {
+		if msg := strings.TrimSpace(e.String()); msg != "" {
+			return msg
+		}
+	}
+
 	// ChatGPT 内部 API 风格：{"detail":"..."}
 	if d := gjson.GetBytes(body, "detail").String(); strings.TrimSpace(d) != "" {
 		return d

@@ -499,6 +499,10 @@ func patchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
+	out, err = sanitizeGrokResponsesInputItems(out)
+	if err != nil {
+		return nil, err
+	}
 	out, err = sanitizeGrokReasoningNullContent(out)
 	if err != nil {
 		return nil, err
@@ -784,6 +788,68 @@ func grokResponsesToolDedupKey(tool gjson.Result) string {
 		}
 	}
 	return "json:" + normalizeCompatSeedJSON(json.RawMessage(tool.Raw))
+}
+
+// grokResponsesSupportedInputItemTypes is the verified ModelInput enum of
+// xAI's CLI chat proxy. Verified live on 2026-08-19 against
+// https://cli-chat-proxy.grok.com/v1/responses: message / reasoning /
+// function_call(_output) / custom_tool_call(_output) / mcp_tool_call(_output)
+// are accepted; metadata-style MCP items (mcp_list_tools, mcp_approval_request,
+// mcp_approval_response, mcp_call), Codex-only items (local_shell_call) and
+// item_reference all fail with:
+//
+//	"data did not match any variant of untagged enum ModelInput"
+var grokResponsesSupportedInputItemTypes = map[string]struct{}{
+	"message":                 {},
+	"reasoning":               {},
+	"function_call":           {},
+	"function_call_output":    {},
+	"custom_tool_call":        {},
+	"custom_tool_call_output": {},
+	"mcp_tool_call":           {},
+	"mcp_tool_call_output":    {},
+}
+
+// sanitizeGrokResponsesInputItems removes input items whose type is rejected
+// by xAI's untagged ModelInput enum. MCP tool calls and their outputs are kept
+// (verified accepted); only metadata records are dropped:
+//   - mcp_list_tools: a client-side snapshot of the MCP tool catalog. The tools
+//     remain declared in the top-level "tools" array, so dropping the snapshot
+//     loses no context.
+//   - mcp_approval_request/response: client-side approval bookkeeping.
+//   - mcp_call: the xAI-native name is rejected by this endpoint; the accepted
+//     OpenAI-style name mcp_tool_call is what clients actually send.
+//   - local_shell_call / item_reference: Codex internals unknown to xAI.
+//
+// Dropping unknown types is forward-compatible: anything xAI adds later is
+// surfaced by a transparent 422 instead of silently deleting model context.
+func sanitizeGrokResponsesInputItems(body []byte) ([]byte, error) {
+	input := gjson.GetBytes(body, "input")
+	if !input.Exists() || !input.IsArray() {
+		return body, nil
+	}
+	items := input.Array()
+	dropped := make([]int, 0)
+	for i, item := range items {
+		itemType := strings.TrimSpace(item.Get("type").String())
+		if itemType == "" || itemType == "additional_tools" {
+			continue
+		}
+		if _, ok := grokResponsesSupportedInputItemTypes[itemType]; !ok {
+			dropped = append(dropped, i)
+		}
+	}
+	if len(dropped) == 0 {
+		return body, nil
+	}
+	for i := len(dropped) - 1; i >= 0; i-- {
+		var err error
+		body, err = sjson.DeleteBytes(body, fmt.Sprintf("input.%d", dropped[i]))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return body, nil
 }
 
 // sanitizeGrokReasoningNullContent 删除 reasoning 项中的 "content": null。

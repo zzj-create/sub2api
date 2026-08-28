@@ -1,6 +1,8 @@
 import { ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
+import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 
 export interface OpenAITokenInfo {
   access_token?: string
@@ -14,6 +16,7 @@ export interface OpenAITokenInfo {
   email?: string
   name?: string
   plan_type?: string
+  subscription_expires_at?: string
   privacy_mode?: string
   // OpenAI specific IDs (extracted from ID Token)
   chatgpt_account_id?: string
@@ -26,6 +29,7 @@ export type OpenAIOAuthPlatform = 'openai'
 
 export function useOpenAIOAuth() {
   const appStore = useAppStore()
+  const { t } = useI18n()
   const endpointPrefix = '/admin/openai'
 
   // State
@@ -78,7 +82,7 @@ export function useOpenAIOAuth() {
       }
       return true
     } catch (err: any) {
-      error.value = err.response?.data?.detail || 'Failed to generate OpenAI auth URL'
+      error.value = extractApiErrorMessage(err, t('admin.accounts.oauth.openai.failedToGenerateUrl'))
       appStore.showError(error.value)
       return false
     } finally {
@@ -114,7 +118,12 @@ export function useOpenAIOAuth() {
       const tokenInfo = await adminAPI.accounts.exchangeCode(`${endpointPrefix}/exchange-code`, payload)
       return tokenInfo as OpenAITokenInfo
     } catch (err: any) {
-      error.value = err.response?.data?.detail || 'Failed to exchange OpenAI auth code'
+      error.value = extractI18nErrorMessage(
+        err,
+        t,
+        'admin.accounts.oauth.openai.errors',
+        t('admin.accounts.oauth.openai.failedToExchangeCode')
+      )
       appStore.showError(error.value)
       return null
     } finally {
@@ -147,7 +156,12 @@ export function useOpenAIOAuth() {
       )
       return tokenInfo as OpenAITokenInfo
     } catch (err: any) {
-      error.value = err.response?.data?.detail || err.message || 'Failed to validate refresh token'
+      error.value = extractI18nErrorMessage(
+        err,
+        t,
+        'admin.accounts.oauth.openai.errors',
+        t('admin.accounts.oauth.openai.failedToValidateRT')
+      )
       appStore.showError(error.value)
       return null
     } finally {
@@ -183,6 +197,9 @@ export function useOpenAIOAuth() {
     }
     if (tokenInfo.plan_type) {
       creds.plan_type = tokenInfo.plan_type
+    }
+    if (tokenInfo.subscription_expires_at) {
+      creds.subscription_expires_at = tokenInfo.subscription_expires_at
     }
     if (tokenInfo.client_id) {
       creds.client_id = tokenInfo.client_id

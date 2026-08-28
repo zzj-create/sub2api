@@ -18,6 +18,8 @@ import subscriptionsAPI from './subscriptions'
 import usageAPI from './usage'
 import geminiAPI from './gemini'
 import antigravityAPI from './antigravity'
+import grokAPI from './grok'
+import cnProvidersAPI from './cnProviders'
 import userAttributesAPI from './userAttributes'
 import opsAPI from './ops'
 import errorPassthroughAPI from './errorPassthrough'
@@ -27,6 +29,14 @@ import scheduledTestsAPI from './scheduledTests'
 import backupAPI from './backup'
 import tlsFingerprintProfileAPI from './tlsFingerprintProfile'
 import channelsAPI from './channels'
+import channelMonitorAPI from './channelMonitor'
+import channelMonitorTemplateAPI from './channelMonitorTemplate'
+import adminPaymentAPI from './payment'
+import affiliatesAPI from './affiliates'
+import riskControlAPI from './riskControl'
+import adminComplianceAPI from './compliance'
+import auditAPI from './audit'
+import pluginsAPI from './plugins'
 
 /**
  * Unified admin API object for convenient access
@@ -47,6 +57,8 @@ export const adminAPI = {
   usage: usageAPI,
   gemini: geminiAPI,
   antigravity: antigravityAPI,
+  grok: grokAPI,
+  cnProviders: cnProvidersAPI,
   userAttributes: userAttributesAPI,
   ops: opsAPI,
   errorPassthrough: errorPassthroughAPI,
@@ -55,7 +67,15 @@ export const adminAPI = {
   scheduledTests: scheduledTestsAPI,
   backup: backupAPI,
   tlsFingerprintProfiles: tlsFingerprintProfileAPI,
-  channels: channelsAPI
+  channels: channelsAPI,
+  channelMonitor: channelMonitorAPI,
+  channelMonitorTemplate: channelMonitorTemplateAPI,
+  payment: adminPaymentAPI,
+  affiliates: affiliatesAPI,
+  riskControl: riskControlAPI,
+  compliance: adminComplianceAPI,
+  audit: auditAPI,
+  plugins: pluginsAPI
 }
 
 export {
@@ -74,6 +94,8 @@ export {
   usageAPI,
   geminiAPI,
   antigravityAPI,
+  grokAPI,
+  cnProvidersAPI,
   userAttributesAPI,
   opsAPI,
   errorPassthroughAPI,
@@ -82,13 +104,29 @@ export {
   scheduledTestsAPI,
   backupAPI,
   tlsFingerprintProfileAPI,
-  channelsAPI
+  channelsAPI,
+  channelMonitorAPI,
+  channelMonitorTemplateAPI,
+  adminPaymentAPI,
+  affiliatesAPI,
+  riskControlAPI,
+  adminComplianceAPI,
+  auditAPI,
+  pluginsAPI
 }
 
 export default adminAPI
 
 // Re-export types used by components
+export type { AuditLog, AuditLogQuery, AuditLogListResponse } from './audit'
 export type { BalanceHistoryItem } from './users'
 export type { ErrorPassthroughRule, CreateRuleRequest, UpdateRuleRequest } from './errorPassthrough'
 export type { BackupAgentHealth, DataManagementConfig } from './dataManagement'
 export type { TLSFingerprintProfile, CreateProfileRequest, UpdateProfileRequest } from './tlsFingerprintProfile'
+export type { ContentModerationConfig, ContentModerationLog, ModerationMode } from './riskControl'
+export type {
+  PluginInstallation,
+  PluginCompatibility,
+  PluginUISession,
+  PluginTestResult
+} from './plugins'

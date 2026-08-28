@@ -4,8 +4,9 @@
  */
 
 import { apiClient } from '../client'
+import type { BillingMode, ChannelStatus, BillingModelSource } from '@/constants/channel'
 
-export type BillingMode = 'token' | 'per_request' | 'image'
+export type { BillingMode } from '@/constants/channel'
 
 export interface PricingInterval {
   id?: number
@@ -16,8 +17,24 @@ export interface PricingInterval {
   output_price: number | null
   cache_write_price: number | null
   cache_read_price: number | null
+  input_multiplier: number | null
+  output_multiplier: number | null
+  cache_write_multiplier: number | null
+  cache_read_multiplier: number | null
   per_request_price: number | null
   sort_order: number
+}
+
+export interface ChannelTimePricingPeriod {
+  start_time: string
+  end_time: string
+  multiplier: number
+}
+
+export interface ChannelTimePricing {
+  timezone: string
+  weekdays_only?: boolean
+  periods: ChannelTimePricingPeriod[]
 }
 
 export interface ChannelModelPricing {
@@ -29,21 +46,36 @@ export interface ChannelModelPricing {
   output_price: number | null
   cache_write_price: number | null
   cache_read_price: number | null
+  fast_multiplier?: number | null
+  flex_multiplier?: number | null
+  image_input_price: number | null
   image_output_price: number | null
   per_request_price: number | null
   intervals: PricingInterval[]
+  time_pricing: ChannelTimePricing | null
+}
+
+export interface AccountStatsPricingRule {
+  id?: number
+  name: string
+  group_ids: number[]
+  account_ids: number[]
+  pricing: ChannelModelPricing[]
 }
 
 export interface Channel {
   id: number
   name: string
   description: string
-  status: string
-  billing_model_source: string // "requested" | "upstream"
+  status: ChannelStatus
+  billing_model_source: BillingModelSource
   restrict_models: boolean
+  features_config?: Record<string, unknown>
   group_ids: number[]
   model_pricing: ChannelModelPricing[]
   model_mapping: Record<string, Record<string, string>> // platform → {src→dst}
+  apply_pricing_to_account_stats: boolean
+  account_stats_pricing_rules: AccountStatsPricingRule[]
   created_at: string
   updated_at: string
 }
@@ -56,6 +88,9 @@ export interface CreateChannelRequest {
   model_mapping?: Record<string, Record<string, string>>
   billing_model_source?: string
   restrict_models?: boolean
+  features_config?: Record<string, unknown>
+  apply_pricing_to_account_stats?: boolean
+  account_stats_pricing_rules?: AccountStatsPricingRule[]
 }
 
 export interface UpdateChannelRequest {
@@ -67,6 +102,9 @@ export interface UpdateChannelRequest {
   model_mapping?: Record<string, Record<string, string>>
   billing_model_source?: string
   restrict_models?: boolean
+  features_config?: Record<string, unknown>
+  apply_pricing_to_account_stats?: boolean
+  account_stats_pricing_rules?: AccountStatsPricingRule[]
 }
 
 interface PaginatedResponse<T> {
@@ -83,6 +121,8 @@ export async function list(
   filters?: {
     status?: string
     search?: string
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
   },
   options?: { signal?: AbortSignal }
 ): Promise<PaginatedResponse<Channel>> {
@@ -134,6 +174,7 @@ export interface ModelDefaultPricing {
   output_price?: number
   cache_write_price?: number
   cache_read_price?: number
+  image_input_price?: number
   image_output_price?: number
 }
 
@@ -144,5 +185,19 @@ export async function getModelDefaultPricing(model: string): Promise<ModelDefaul
   return data
 }
 
-const channelsAPI = { list, getById, create, update, remove, getModelDefaultPricing }
+export interface SyncPricingModelsResult {
+  models: string[]
+}
+
+/**
+ * Fetch the latest model names from the LiteLLM pricing catalog for the given platform
+ */
+export async function syncPricingModels(platform: string): Promise<SyncPricingModelsResult> {
+  const { data } = await apiClient.get<SyncPricingModelsResult>('/admin/channels/pricing/sync-models', {
+    params: { platform }
+  })
+  return data
+}
+
+const channelsAPI = { list, getById, create, update, remove, getModelDefaultPricing, syncPricingModels }
 export default channelsAPI

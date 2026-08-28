@@ -20,11 +20,11 @@ func NewProxyPoolRepository(db *sql.DB) service.ProxyPoolRepository {
 	return &proxyPoolRepository{db: db}
 }
 
-type rowScanner interface {
+type proxyPoolRowScanner interface {
 	Scan(dest ...any) error
 }
 
-func scanProxyPool(row rowScanner) (*service.ProxyPool, error) {
+func scanProxyPool(row proxyPoolRowScanner) (*service.ProxyPool, error) {
 	var (
 		pool        service.ProxyPool
 		description sql.NullString

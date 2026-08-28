@@ -207,6 +207,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 
 	var usage *OpenAIUsage
 	var firstTokenMs *int
+	hasThinking := false
 	responseID := ""
 	searchCount := 0
 	imageCount := 0
@@ -226,6 +227,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		}
 		usage = streamResult.usage
 		firstTokenMs = streamResult.firstTokenMs
+		hasThinking = streamResult.hasThinking
 		responseID = strings.TrimSpace(streamResult.responseID)
 		searchCount = streamResult.searchCount
 		imageCount = streamResult.imageCount
@@ -236,6 +238,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 			return nil, err
 		}
 		usage = nonStreamResult.usage
+		hasThinking = nonStreamResult.hasThinking
 		responseID = strings.TrimSpace(nonStreamResult.responseID)
 		searchCount = nonStreamResult.searchCount
 		imageCount = nonStreamResult.imageCount
@@ -258,6 +261,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		ResponseHeaders: resp.Header.Clone(),
 		Duration:        time.Since(startTime),
 		FirstTokenMs:    firstTokenMs,
+		HasThinking:     hasThinking,
 	}
 	// Propagate search/image counters from the shared Responses handler — without
 	// this, stream/JSON counting runs but search_price_per_1k / image bills never apply.
@@ -561,7 +565,7 @@ func patchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, erro
 			}
 		}
 	}
-	if strings.EqualFold(upstreamModel, "grok-4.5") {
+	if grokModelRejectsPenaltyAndStopFields(upstreamModel) {
 		for _, unsupportedField := range []string{"presence_penalty", "presencePenalty", "frequency_penalty", "frequencyPenalty", "stop"} {
 			if gjson.GetBytes(out, unsupportedField).Exists() {
 				out, err = sjson.DeleteBytes(out, unsupportedField)
@@ -597,6 +601,10 @@ func patchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
+	out, err = sanitizeGrokResponsesInputItems(out)
+	if err != nil {
+		return nil, err
+	}
 	out, err = stripRedundantGrokViewImageTool(out)
 	if err != nil {
 		return nil, err
@@ -610,6 +618,16 @@ func patchGrokResponsesBodyBase(body []byte, upstreamModel string) ([]byte, erro
 		return nil, err
 	}
 	return out, nil
+}
+
+func grokModelRejectsPenaltyAndStopFields(model string) bool {
+	model = strings.ToLower(xai.StripGrokProviderPrefix(strings.TrimSpace(model)))
+	switch model {
+	case "grok-4.5", "grok-4.5-latest", "grok-4.6", "grok-4.6-latest":
+		return true
+	default:
+		return false
+	}
 }
 
 // xAI's Grok 4.20 family and newer models do not support OpenAI's logprobs
@@ -953,6 +971,70 @@ func grokResponsesToolDedupKey(tool gjson.Result) string {
 	return "json:" + normalizeCompatSeedJSON(json.RawMessage(tool.Raw))
 }
 
+// grokResponsesSupportedInputItemTypes is the verified ModelInput enum of
+// xAI's CLI chat proxy. Verified live on 2026-08-19 against
+// https://cli-chat-proxy.grok.com/v1/responses: message / reasoning /
+// function_call(_output) / custom_tool_call(_output) / mcp_tool_call(_output)
+// are accepted; metadata-style MCP items (mcp_list_tools, mcp_approval_request,
+// mcp_approval_response, mcp_call), Codex-only items (local_shell_call) and
+// item_reference all fail with:
+//
+//	"data did not match any variant of untagged enum ModelInput"
+var grokResponsesSupportedInputItemTypes = map[string]struct{}{
+	"message":                 {},
+	"reasoning":               {},
+	"function_call":           {},
+	"function_call_output":    {},
+	"custom_tool_call":        {},
+	"custom_tool_call_output": {},
+	"mcp_tool_call":           {},
+	"mcp_tool_call_output":    {},
+}
+
+// sanitizeGrokResponsesInputItems removes input items whose type is rejected
+// by xAI's untagged ModelInput enum. MCP tool calls and their outputs are kept
+// (verified accepted); only metadata records are dropped:
+//   - mcp_list_tools: a client-side snapshot of the MCP tool catalog. The tools
+//     remain declared in the top-level "tools" array, so dropping the snapshot
+//     loses no context.
+//   - mcp_approval_request/response: client-side approval bookkeeping.
+//   - mcp_call: the xAI-native name is rejected by this endpoint; the accepted
+//     OpenAI-style name mcp_tool_call is what clients actually send.
+//   - local_shell_call / item_reference: Codex internals unknown to xAI.
+//
+// Dropping unknown types is forward-compatible: anything xAI adds later is
+// surfaced by a transparent 422 instead of silently deleting model context.
+func sanitizeGrokResponsesInputItems(body []byte) ([]byte, error) {
+	input := gjson.GetBytes(body, "input")
+	if !input.Exists() || !input.IsArray() {
+		return body, nil
+	}
+	items := input.Array()
+	dropped := make([]int, 0)
+	for i, item := range items {
+		itemType := strings.TrimSpace(item.Get("type").String())
+		if itemType == "" || itemType == "additional_tools" {
+			continue
+		}
+		if _, ok := grokResponsesSupportedInputItemTypes[itemType]; !ok {
+			dropped = append(dropped, i)
+		}
+	}
+	if len(dropped) == 0 {
+		return body, nil
+	}
+	for i := len(dropped) - 1; i >= 0; i-- {
+		var err error
+		body, err = sjson.DeleteBytes(body, fmt.Sprintf("input.%d", dropped[i]))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return body, nil
+}
+
+// sanitizeGrokReasoningNullContent 删除 reasoning 项中的 "content": null。
+// xAI 的 untagged enum 反序列化器拒收该字段，返回 422。
 // sanitizeGrokReasoningNullContent drops explicit JSON nulls from Responses
 // input items. xAI's untagged ModelInput decoder 422s on those fields.
 // Compaction items stay unmodified per the compact contract.
@@ -2004,12 +2086,12 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 	}
 	now := time.Now()
 	decision := classifyGrokUpstreamFailure(statusCode, responseBody, grokRequestedModelFromCtx(ctx))
-	snapshot := parseGrokQuotaSnapshot(headers, statusCode, now)
-	stampGrokQuotaSnapshotForPlan(account, snapshot, grokRequestedModelFromCtx(ctx))
+	quotaSnapshot := parseGrokQuotaSnapshotWithBody(headers, statusCode, responseBody, now)
+	stampGrokQuotaSnapshotForPlan(account, quotaSnapshot, grokRequestedModelFromCtx(ctx))
 	// Capacity 429 is model pressure, not account quota exhaustion. Keep the
 	// snapshot for observability but do not install account-level rate limiting;
 	// the failover decision below applies a bounded model-scoped block instead.
-	s.updateGrokUsageSnapshotWithRateLimit(ctx, account, snapshot, decision.Class != GrokFailureModelCapacity)
+	s.updateGrokUsageSnapshotWithRateLimit(ctx, account, quotaSnapshot, decision.Class != GrokFailureModelCapacity)
 
 	// Body-first free-usage / empty / billing / capacity must run before the
 	// status switch so non-429 free-usage bodies still cool the account.
@@ -2018,17 +2100,13 @@ func (s *OpenAIGatewayService) handleGrokAccountUpstreamError(ctx context.Contex
 		if account.IsPoolMode() {
 			// Allow configured temp rules (403) below; skip default body cools.
 		} else {
-			// A free-tier exhaustion message describes a rolling usage window. Use
-			// an upstream absolute reset (or Retry-After) when available; otherwise
-			// apply only a short probe cooldown. Never start a fabricated 24h window
-			// at the instant this error was received.
+			// Free usage exhaustion is account-scoped in the restored policy. The
+			// body-aware snapshot supplies a 24-hour fallback when xAI omits reset
+			// headers, so the account visibly enters durable rate-limit state.
 			if decision.Class == GrokFailureFreeUsage {
-				if resetAt, limited := grokRateLimitResetAtForAccount(account, parseGrokQuotaSnapshot(headers, statusCode, now), now); limited && resetAt.After(now) {
-					if decision.Model != "" && isGrokModelSpecificFreeUsage(strings.ToLower(decision.Reason), decision.Model) {
-						markGrokModelQuotaBlock(account.ID, decision.Model, resetAt)
-						return
-					}
-					s.rateLimitGrok(ctx, account, resetAt)
+				if resetAt, limited := grokRateLimitResetAtForAccount(account, quotaSnapshot, now); limited && resetAt.After(now) {
+					// updateGrokUsageSnapshot already installed this exact durable
+					// generation and its runtime block.
 					return
 				}
 			}

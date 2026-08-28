@@ -2,12 +2,44 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestAttachProxyLatencyIncludesCachedGrokQuality(t *testing.T) {
+	checkedAt := time.Date(2026, time.August, 7, 12, 0, 0, 0, time.UTC)
+	httpStatus := http.StatusUnauthorized
+	cache := &proxyPoolServiceTestLatencyCache{values: map[int64]*ProxyLatencyInfo{
+		7: {
+			Success:               true,
+			GrokQualityStatus:     "pass",
+			GrokQualityCheckedAt:  &checkedAt,
+			GrokQualityHTTPStatus: &httpStatus,
+			GrokQualityMessage:    "target reachable",
+		},
+	}}
+	service := &adminServiceImpl{proxyLatencyCache: cache}
+	proxies := []ProxyWithAccountCount{{Proxy: Proxy{ID: 7}}}
+
+	service.attachProxyLatency(context.Background(), proxies)
+
+	require.Equal(t, "pass", proxies[0].GrokQualityStatus)
+	require.Equal(t, &checkedAt, proxies[0].GrokQualityCheckedAt)
+	require.Equal(t, &httpStatus, proxies[0].GrokQualityHTTPStatus)
+	require.Equal(t, "target reachable", proxies[0].GrokQualityMessage)
+}
+
+type proxyQualityRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f proxyQualityRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func TestFinalizeProxyQualityResult_ScoreAndGrade(t *testing.T) {
 	result := &ProxyQualityCheckResult{
@@ -133,4 +165,24 @@ func TestRunProxyQualityTarget_GrokUnauthorizedPasses(t *testing.T) {
 	require.Equal(t, "pass", item.Status)
 	require.Equal(t, http.StatusUnauthorized, item.HTTPStatus)
 	require.Contains(t, item.Message, "目标可达")
+}
+
+func TestRunGrokProxyQualityTargetUsesConfiguredTarget(t *testing.T) {
+	var requestURL string
+	client := &http.Client{Transport: proxyQualityRoundTripper(func(req *http.Request) (*http.Response, error) {
+		requestURL = req.URL.String()
+		return &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":"unauthorized"}`)),
+			Request:    req,
+		}, nil
+	})}
+
+	item := RunGrokProxyQualityTarget(context.Background(), client)
+
+	require.Equal(t, "https://api.x.ai/v1/models", requestURL)
+	require.Equal(t, "grok", item.Target)
+	require.Equal(t, "pass", item.Status)
+	require.Equal(t, http.StatusUnauthorized, item.HTTPStatus)
 }

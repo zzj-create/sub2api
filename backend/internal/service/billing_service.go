@@ -673,7 +673,7 @@ func (s *BillingService) initFallbackPricing() {
 	s.fallbackPrices["grok-4.5"] = &ModelPricing{
 		InputPricePerToken:            2e-6,
 		OutputPricePerToken:           6e-6,
-		CacheReadPricePerToken:        0.3e-6,
+		CacheReadPricePerToken:        0.5e-6,
 		SupportsCacheBreakdown:        false,
 		LongContextInputThreshold:     200000,
 		LongContextThresholdInclusive: true,

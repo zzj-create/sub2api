@@ -18,6 +18,13 @@ import (
 	"go.uber.org/zap"
 )
 
+// Passive quality observation is best-effort. Bound the number of detached
+// observers so a burst of successful Grok traffic cannot create an unbounded
+// goroutine/DB backlog on small deployments.
+const proxyPoolQualityObserverLimit = 8
+
+var proxyPoolQualityObserverSlots = make(chan struct{}, proxyPoolQualityObserverLimit)
+
 // OpenAIRecordUsageInput input for recording usage
 type OpenAIRecordUsageInput struct {
 	Result             *OpenAIForwardResult
@@ -143,6 +150,22 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 	user := input.User
 	account := input.Account
 	subscription := input.Subscription
+	if s.proxyPoolQualityObserver != nil && account != nil && account.IsGrok() && result.SucceededForScheduling() {
+		accountSnapshot := *account
+		resultSnapshot := *result
+		select {
+		case proxyPoolQualityObserverSlots <- struct{}{}:
+			go func(observer ProxyPoolQualityObserver, observedAccount *Account, observedResult *OpenAIForwardResult) {
+				defer func() { <-proxyPoolQualityObserverSlots }()
+				observeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				observer.ObserveGrokResponse(observeCtx, observedAccount, observedResult)
+			}(s.proxyPoolQualityObserver, &accountSnapshot, &resultSnapshot)
+		default:
+			// Dropping a sample is safe; the next successful request or scheduled
+			// active probe will provide another observation.
+		}
+	}
 	if !isGrokVideoUsageResult(result, nil) {
 		ApplyOpenAIImageBillingResolution(result)
 	}

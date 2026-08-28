@@ -201,7 +201,7 @@ func TestExtractGrokResponsesReasoningEffortSupportsOpenAICompatibleField(t *tes
 	require.Equal(t, "high", *effort)
 }
 
-func TestPatchGrokResponsesBodyDropsGrok45ReasoningUnsupportedFields(t *testing.T) {
+func TestPatchGrokResponsesBodyDropsLatestGrokUnsupportedFields(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`{
@@ -214,15 +214,20 @@ func TestPatchGrokResponsesBodyDropsGrok45ReasoningUnsupportedFields(t *testing.
 		"stop": ["done"]
 	}`)
 
-	patched, err := patchGrokResponsesBody(body, "grok-4.5")
-	require.NoError(t, err)
-	require.True(t, json.Valid(patched))
-	require.Equal(t, "grok-4.5", gjson.GetBytes(patched, "model").String())
-	require.False(t, gjson.GetBytes(patched, "presence_penalty").Exists())
-	require.False(t, gjson.GetBytes(patched, "presencePenalty").Exists())
-	require.False(t, gjson.GetBytes(patched, "frequency_penalty").Exists())
-	require.False(t, gjson.GetBytes(patched, "frequencyPenalty").Exists())
-	require.False(t, gjson.GetBytes(patched, "stop").Exists())
+	for _, model := range []string{"grok-4.5", "grok-4.6", "x-ai/grok-4.6-latest"} {
+		model := model
+		t.Run(model, func(t *testing.T) {
+			patched, err := patchGrokResponsesBody(body, model)
+			require.NoError(t, err)
+			require.True(t, json.Valid(patched))
+			require.Equal(t, model, gjson.GetBytes(patched, "model").String())
+			require.False(t, gjson.GetBytes(patched, "presence_penalty").Exists())
+			require.False(t, gjson.GetBytes(patched, "presencePenalty").Exists())
+			require.False(t, gjson.GetBytes(patched, "frequency_penalty").Exists())
+			require.False(t, gjson.GetBytes(patched, "frequencyPenalty").Exists())
+			require.False(t, gjson.GetBytes(patched, "stop").Exists())
+		})
+	}
 }
 
 func TestPatchGrokResponsesBodyKeepsPenaltyAndStopFieldsForNon45Models(t *testing.T) {
@@ -277,6 +282,19 @@ func TestPatchGrokResponsesBodyNormalizesReasoningEffortAliases(t *testing.T) {
 			require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
 		})
 	}
+}
+
+func TestPatchGrokResponsesBodyPreservesGrok46ModelAndReasoningEffort(t *testing.T) {
+	t.Parallel()
+
+	patched, err := patchGrokResponsesBody(
+		[]byte(`{"model":"grok-4.5","input":"hello","reasoningEffort":"xhigh"}`),
+		"grok-4.6",
+	)
+	require.NoError(t, err)
+	require.Equal(t, "grok-4.6", gjson.GetBytes(patched, "model").String())
+	require.Equal(t, "xhigh", gjson.GetBytes(patched, "reasoning_effort").String())
+	require.False(t, gjson.GetBytes(patched, "reasoningEffort").Exists())
 }
 
 func TestPatchGrokResponsesBodyAddsDefaultFunctionParameters(t *testing.T) {
@@ -501,6 +519,84 @@ func TestSanitizeGrokResponsesToolsKeepsToolChoiceOnlyWithSupportedTools(t *test
 			if tt.wantToolChoice {
 				require.Equal(t, "auto", gjson.GetBytes(patched, "tool_choice").String())
 			}
+		})
+	}
+}
+
+func TestSanitizeGrokResponsesInputItems(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		body      string
+		wantTypes []string
+	}{
+		{
+			name: "drops mcp metadata records and keeps conversation",
+			body: `{"input":[
+				{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+				{"type":"mcp_list_tools","id":"ml_1","server_label":"mcp__svc","tools":[]},
+				{"type":"mcp_approval_request","id":"ar_1","name":"echo","server_label":"mcp__svc","arguments":"{}"},
+				{"type":"mcp_approval_response","id":"ar_2","approval_request_id":"ar_1","approve":true},
+				{"type":"mcp_tool_call","id":"mc_1","call_id":"c1","name":"echo","server_label":"mcp__svc","arguments":"{}"},
+				{"type":"mcp_tool_call_output","call_id":"c1","output":"ok"},
+				{"type":"function_call","id":"f1","call_id":"f1","name":"fn","arguments":"{}"},
+				{"type":"function_call_output","call_id":"f1","output":"done"},
+				{"type":"custom_tool_call","id":"t1","call_id":"t1","name":"tool","input":"{}"},
+				{"type":"custom_tool_call_output","call_id":"t1","output":"done"},
+				{"type":"reasoning","id":"r1","summary":[{"type":"summary_text","text":"ok"}]}
+			]}`,
+			wantTypes: []string{
+				"message", "mcp_tool_call", "mcp_tool_call_output",
+				"function_call", "function_call_output",
+				"custom_tool_call", "custom_tool_call_output", "reasoning",
+			},
+		},
+		{
+			name:      "drops codex local shell and item reference",
+			body:      `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"local_shell_call","id":"l1"},{"type":"item_reference","id":"resp_1"}]}`,
+			wantTypes: []string{"message"},
+		},
+		{
+			name:      "input string is untouched",
+			body:      `{"input":"hello"}`,
+			wantTypes: nil,
+		},
+		{
+			name:      "no input is untouched",
+			body:      `{"model":"grok"}`,
+			wantTypes: nil,
+		},
+		{
+			name: "additional_tools carrier survives this layer",
+			body: `{"input":[
+				{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
+				{"type":"additional_tools","tools":[{"type":"function","name":"f"}]}
+			]}`,
+			wantTypes: []string{"message", "additional_tools"},
+		},
+		{
+			name:      "unknown future type is dropped instead of 422",
+			body:      `{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},{"type":"future_widget","data":{}}]}`,
+			wantTypes: []string{"message"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := sanitizeGrokResponsesInputItems([]byte(tt.body))
+			require.NoError(t, err)
+			require.True(t, json.Valid(out))
+			if tt.wantTypes == nil {
+				require.Equal(t, tt.body, string(out))
+				return
+			}
+			items := gjson.GetBytes(out, "input").Array()
+			gotTypes := make([]string, 0, len(items))
+			for _, item := range items {
+				gotTypes = append(gotTypes, item.Get("type").String())
+			}
+			require.Equal(t, tt.wantTypes, gotTypes)
 		})
 	}
 }
@@ -3755,4 +3851,27 @@ func TestBuildGrokSchedulerExtraUpdates_FeedsThresholdEvaluator(t *testing.T) {
 func TestBuildGrokSchedulerExtraUpdates_NilWhenNoQuotaWindows(t *testing.T) {
 	require.Nil(t, buildGrokSchedulerExtraUpdates(&xai.QuotaSnapshot{}))
 	require.Nil(t, buildGrokSchedulerExtraUpdates(nil))
+}
+
+func TestPatchGrokResponsesBodyBackfillsMissingToolSearchOutput(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{
+		"model": "grok-4.6",
+		"tools": [{"type": "tool_search"}],
+		"input": [
+			{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "find a tool"}]},
+			{"type": "tool_search_call", "call_id": "search", "status": "completed", "execution": "client", "arguments": {"query": "browser"}},
+			{"type": "tool_search_output", "call_id": "search", "status": "completed", "execution": "client", "tools": [{"type": "namespace", "name": "browser"}]}
+		]
+	}`)
+
+	patched, mapping, err := patchGrokResponsesBodyWithClientTools(body, "grok-4.6")
+	require.NoError(t, err)
+	require.True(t, mapping.ToolSearch)
+
+	output := gjson.GetBytes(patched, `input.#(type=="function_call_output")`)
+	require.True(t, output.Exists())
+	require.Equal(t, "search", output.Get("call_id").String())
+	require.JSONEq(t, `[{"type":"namespace","name":"browser"}]`, output.Get("output").String())
 }

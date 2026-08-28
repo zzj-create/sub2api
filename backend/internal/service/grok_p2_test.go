@@ -74,7 +74,7 @@ func TestAccountGrokNeedsReauth(t *testing.T) {
 	}))
 }
 
-func TestApplyGrokUpstreamFailure_ModelSpecificFreeUsage(t *testing.T) {
+func TestApplyGrokUpstreamFailure_ModelSpecificFreeUsageUsesAccountCooldown(t *testing.T) {
 	repo := &grokQuotaAccountRepo{}
 	svc := &OpenAIGatewayService{accountRepo: repo}
 	account := &Account{ID: 9109, Platform: PlatformGrok, Type: AccountTypeOAuth}
@@ -82,8 +82,10 @@ func TestApplyGrokUpstreamFailure_ModelSpecificFreeUsage(t *testing.T) {
 
 	svc.handleGrokAccountUpstreamError(context.Background(), account, 400, nil, body)
 
-	require.Zero(t, repo.tempUnschedCalls, "model-scoped free usage must not cool sibling models")
-	require.True(t, isGrokModelQuotaBlocked(account.ID, "grok-4.5", time.Now()))
+	require.Zero(t, repo.tempUnschedCalls)
+	require.Equal(t, 1, repo.rateLimitedCalls)
+	require.WithinDuration(t, time.Now().Add(grokFreeUsageExhaustionCooldown), repo.lastRateLimitResetAt, time.Second)
+	require.False(t, isGrokModelQuotaBlocked(account.ID, "grok-4.5", time.Now()))
 	require.False(t, isGrokModelQuotaBlocked(account.ID, "grok-4.3", time.Now()))
 }
 

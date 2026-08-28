@@ -185,6 +185,7 @@
           @refresh-token="handleBulkRefreshToken"
           @bind-proxy-pool="showBindProxyPool = true"
           @probe-upstream-billing="handleBulkProbeUpstreamBilling"
+          @bind-proxy-pool="showBindProxyPool = true"
           @edit-selected="openBulkEditSelected"
           @edit-filtered="openBulkEditFiltered"
           @clear="clearSelection"
@@ -326,6 +327,9 @@
               @account-updated="handleAccountUpdated"
               @usage-loaded="handleAccountUsageLoaded(row.id, $event)"
             />
+          </template>
+          <template #cell-grok_quality="{ row }">
+            <AccountQualityCell :account="row" />
           </template>
           <template #cell-proxy="{ row }">
             <div class="flex flex-col gap-1">
@@ -471,7 +475,13 @@
       @close="showBulkEdit = false"
       @updated="handleBulkUpdated"
     />
-    <BindProxyPoolModal :show="showBindProxyPool" :account-ids="selIds" :pools="proxyPools" @close="showBindProxyPool = false" @bound="handleProxyPoolBound" />
+    <BindProxyPoolModal
+      :show="showBindProxyPool"
+      :account-ids="selIds"
+      :pools="proxyPools"
+      @close="showBindProxyPool = false"
+      @bound="handleProxyPoolBound"
+    />
     <TempUnschedStatusModal :show="showTempUnsched" :account="tempUnschedAcc" @close="showTempUnsched = false" @reset="handleTempUnschedReset" />
     <ConfirmDialog :show="showDeleteDialog" :title="t('admin.accounts.deleteAccount')" :message="t('admin.accounts.deleteConfirm', { name: deletingAcc?.name })" :confirm-text="t('common.delete')" :cancel-text="t('common.cancel')" :danger="true" @confirm="confirmDelete" @cancel="showDeleteDialog = false" />
     <ConfirmDialog :show="showCreateShadowDialog" :title="t('admin.accounts.createSparkShadow')" :message="t('admin.accounts.createSparkShadowConfirm', { name: creatingShadowAcc?.name })" @confirm="confirmCreateSparkShadow" @cancel="showCreateShadowDialog = false" />
@@ -522,13 +532,14 @@ import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
 import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vue'
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
+import AccountQualityCell from '@/components/account/AccountQualityCell.vue'
 import UpstreamBillingRateCell from '@/components/account/UpstreamBillingRateCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
 import Icon from '@/components/icons/Icon.vue'
 import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRulesModal.vue'
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { fetchAllAccountIds } from '@/utils/accountSelection'
-import { buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
+import { buildGrokQualityRefreshKey, buildGrokUsageRefreshKey, buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
 import { extractApiErrorMessage } from '@/utils/apiError'
@@ -592,6 +603,7 @@ const showImportData = ref(false)
 const showExportDataDialog = ref(false)
 const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
+const showBindProxyPool = ref(false)
 const bulkEditTarget = ref<AccountBulkEditTarget | null>(null)
 const showBindProxyPool = ref(false)
 const showTempUnsched = ref(false)
@@ -1306,6 +1318,7 @@ const shouldReplaceAutoRefreshRow = (current: Account, next: Account) => {
     current.rate_limit_reset_at !== next.rate_limit_reset_at ||
     current.overload_until !== next.overload_until ||
     current.temp_unschedulable_until !== next.temp_unschedulable_until ||
+    buildGrokQualityRefreshKey(current) !== buildGrokQualityRefreshKey(next) ||
     buildOpenAIUsageRefreshKey(current) !== buildOpenAIUsageRefreshKey(next) ||
     buildGrokUsageRefreshKey(current) !== buildGrokUsageRefreshKey(next)
   )
@@ -1709,6 +1722,7 @@ const allColumns = computed(() => {
   }
   c.push({ key: 'usage', label: t('admin.accounts.columns.usageWindows'), sortable: false })
   c.push(
+    { key: 'grok_quality', label: t('admin.accounts.columns.grokQuality'), sortable: false },
     { key: 'proxy', label: t('admin.accounts.columns.proxy'), sortable: false },
     { key: 'priority', label: t('admin.accounts.columns.priority'), sortable: true },
     { key: 'scheduler_score', label: t('admin.accounts.columns.schedulerScore'), sortable: false },
@@ -2488,7 +2502,7 @@ onMounted(async () => {
   } else {
     console.error('Failed to load groups:', groupsResult.reason)
   }
-  void loadProxyPools()
+  await loadProxyPools()
   window.addEventListener('scroll', handleScroll, true)
   window.addEventListener('resize', handleViewportResize)
   document.addEventListener('click', handleClickOutside)

@@ -509,6 +509,10 @@ func grokChatResponsesRuntimeEligible(upstreamModel, cacheIdentity string) bool 
 	return grokChatResponsesBridgeModel(upstreamModel) && strings.TrimSpace(cacheIdentity) != ""
 }
 
+func grokChatResponsesBridgeModelSupported(model string) bool {
+	return grokChatResponsesBridgeModel(model)
+}
+
 // forwardGrokChatCompletionsViaResponses converts a strictly compatible Chat
 // request into xAI Responses format and reuses the established Responses-to-
 // Chat response translators. It intentionally does not run the Codex OAuth

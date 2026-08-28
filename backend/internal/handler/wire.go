@@ -26,6 +26,7 @@ func ProvideAdminHandlers(
 	cnProviderHandler *admin.CNProviderHandler,
 	proxyHandler *admin.ProxyHandler,
 	proxyPoolHandler *admin.ProxyPoolHandler,
+	proxyPoolService *service.ProxyPoolService,
 	redeemHandler *admin.RedeemHandler,
 	promoHandler *admin.PromoHandler,
 	settingHandler *admin.SettingHandler,
@@ -53,6 +54,7 @@ func ProvideAdminHandlers(
 ) *AdminHandlers {
 	accountHandler.SetUpstreamBillingProbeService(upstreamBillingProbe)
 	accountHandler.SetOllamaCloudUsageService(ollamaCloudUsage)
+	accountHandler.SetAccountQualityReader(proxyPoolService)
 	return &AdminHandlers{
 		Dashboard:              dashboardHandler,
 		User:                   userHandler,

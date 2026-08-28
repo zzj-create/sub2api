@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type accountQualityReaderStub struct {
+	requested []int64
+	snapshots map[int64]*service.ProxyPoolAccountQualitySnapshot
+}
+
+func (s *accountQualityReaderStub) ListAccountQualitySnapshots(_ context.Context, accountIDs []int64) (map[int64]*service.ProxyPoolAccountQualitySnapshot, error) {
+	s.requested = append([]int64(nil), accountIDs...)
+	return s.snapshots, nil
+}
 
 func setupAccountListRouter() (*gin.Engine, *stubAdminService) {
 	gin.SetMode(gin.TestMode)
@@ -50,6 +61,50 @@ func TestAccountHandlerListIncludesCreatedAt(t *testing.T) {
 	require.NoError(t, err)
 	_, offset := parsed.Zone()
 	require.Equal(t, 0, offset)
+}
+
+func TestAccountHandlerListIncludesPerAccountGrokQuality(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	adminSvc := newStubAdminService()
+	now := time.Now().UTC()
+	adminSvc.accounts = []service.Account{{
+		ID: 42, Name: "grok-account", Platform: service.PlatformGrok,
+		Type: service.AccountTypeOAuth, Status: service.StatusActive,
+		Schedulable: true, CreatedAt: now, UpdatedAt: now,
+	}}
+	hasThinking := true
+	reader := &accountQualityReaderStub{snapshots: map[int64]*service.ProxyPoolAccountQualitySnapshot{
+		42: {
+			AccountID: 42, PoolID: 7, PoolName: "Grok pool", ProxyID: 9, ProxyName: "TN exit",
+			QualityClass: service.ProxyPoolQualityHealthy, OutputTPS: 123.5, OutputTokens: 64,
+			DurationMs: 2000, FirstTokenMs: 250, HasThinking: &hasThinking,
+			Source: "passive", ObservedAt: now,
+		},
+	}}
+	handler := NewAccountHandler(adminSvc, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	handler.SetAccountQualityReader(reader)
+	router := gin.New()
+	router.GET("/api/v1/admin/accounts", handler.List)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts?page=1&page_size=20&platform=grok&lite=1", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []int64{42}, reader.requested)
+	var payload struct {
+		Data struct {
+			Items []struct {
+				ID          int64                                    `json:"id"`
+				GrokQuality *service.ProxyPoolAccountQualitySnapshot `json:"grok_quality"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Data.Items, 1)
+	require.NotNil(t, payload.Data.Items[0].GrokQuality)
+	require.InDelta(t, 123.5, payload.Data.Items[0].GrokQuality.OutputTPS, 0.001)
+	require.Equal(t, "TN exit", payload.Data.Items[0].GrokQuality.ProxyName)
 }
 
 func TestAccountHandlerListReturnsSchedulerScoresPerGroup(t *testing.T) {

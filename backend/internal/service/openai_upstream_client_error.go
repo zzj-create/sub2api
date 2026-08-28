@@ -24,7 +24,11 @@ const openAIUpstreamClientErrorFallbackMessage = "Upstream rejected the request"
 //   - 429 已有独立分支映射成 429。
 //   - 413 在更上面就按 request-body-too-large 走 failover 了。
 func isOpenAIDeterministicClientError(statusCode int) bool {
-	return statusCode == http.StatusBadRequest
+	// 400 is an invalid request. 422 (unprocessable content) has the same
+	// semantics: the request body failed the upstream schema, e.g. xAI's
+	// untagged ModelInput enum rejecting an unknown input item. Both must reach
+	// the client as-is instead of being re-wrapped as a retryable 502.
+	return statusCode == http.StatusBadRequest || statusCode == http.StatusUnprocessableEntity
 }
 
 // writeOpenAIUpstreamClientError 以 OpenAI 错误体形状回写确定性客户端错误。

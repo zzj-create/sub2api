@@ -18,21 +18,23 @@ func NewProxyPoolHandler(poolService *service.ProxyPoolService) *ProxyPoolHandle
 }
 
 type createProxyPoolRequest struct {
-	Name                  string  `json:"name" binding:"required,max=100"`
-	Description           *string `json:"description"`
-	Status                string  `json:"status" binding:"omitempty,oneof=active disabled"`
-	HealthIntervalSeconds int     `json:"health_interval_seconds" binding:"omitempty,min=30,max=86400"`
-	FailureThreshold      int     `json:"failure_threshold" binding:"omitempty,min=1,max=10"`
-	AutoRebind            *bool   `json:"auto_rebind"`
+	Name                  string                               `json:"name" binding:"required,max=100"`
+	Description           *string                              `json:"description"`
+	Status                string                               `json:"status" binding:"omitempty,oneof=active disabled"`
+	HealthIntervalSeconds int                                  `json:"health_interval_seconds" binding:"omitempty,min=30,max=86400"`
+	FailureThreshold      int                                  `json:"failure_threshold" binding:"omitempty,min=1,max=10"`
+	AutoRebind            *bool                                `json:"auto_rebind"`
+	QualityPolicy         *service.ProxyPoolQualityPolicyPatch `json:"quality_policy"`
 }
 
 type updateProxyPoolRequest struct {
-	Name                  *string `json:"name" binding:"omitempty,max=100"`
-	Description           *string `json:"description"`
-	Status                *string `json:"status" binding:"omitempty,oneof=active disabled"`
-	HealthIntervalSeconds *int    `json:"health_interval_seconds" binding:"omitempty,min=30,max=86400"`
-	FailureThreshold      *int    `json:"failure_threshold" binding:"omitempty,min=1,max=10"`
-	AutoRebind            *bool   `json:"auto_rebind"`
+	Name                  *string                              `json:"name" binding:"omitempty,max=100"`
+	Description           *string                              `json:"description"`
+	Status                *string                              `json:"status" binding:"omitempty,oneof=active disabled"`
+	HealthIntervalSeconds *int                                 `json:"health_interval_seconds" binding:"omitempty,min=30,max=86400"`
+	FailureThreshold      *int                                 `json:"failure_threshold" binding:"omitempty,min=1,max=10"`
+	AutoRebind            *bool                                `json:"auto_rebind"`
+	QualityPolicy         *service.ProxyPoolQualityPolicyPatch `json:"quality_policy"`
 }
 
 type proxyPoolIDsRequest struct {
@@ -41,6 +43,10 @@ type proxyPoolIDsRequest struct {
 
 type proxyPoolAccountIDsRequest struct {
 	AccountIDs []int64 `json:"account_ids" binding:"required,min=1,max=10000,dive,gt=0"`
+}
+
+type proxyPoolGroupIDsRequest struct {
+	GroupIDs []int64 `json:"group_ids" binding:"required,min=1,max=1000,dive,gt=0"`
 }
 
 func parseProxyPoolID(c *gin.Context) (int64, bool) {
@@ -91,6 +97,7 @@ func (h *ProxyPoolHandler) Create(c *gin.Context) {
 		HealthIntervalSeconds: req.HealthIntervalSeconds,
 		FailureThreshold:      req.FailureThreshold,
 		AutoRebind:            autoRebind,
+		QualityPolicy:         req.QualityPolicy,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -116,6 +123,7 @@ func (h *ProxyPoolHandler) Update(c *gin.Context) {
 		HealthIntervalSeconds: req.HealthIntervalSeconds,
 		FailureThreshold:      req.FailureThreshold,
 		AutoRebind:            req.AutoRebind,
+		QualityPolicy:         req.QualityPolicy,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -151,6 +159,68 @@ func (h *ProxyPoolHandler) GetProxies(c *gin.Context) {
 		out = append(out, *dto.ProxyPoolProxyFromService(&proxies[i]))
 	}
 	response.Success(c, out)
+}
+
+func (h *ProxyPoolHandler) GetGroups(c *gin.Context) {
+	id, ok := parseProxyPoolID(c)
+	if !ok {
+		return
+	}
+	groups, err := h.service.ListPoolGroups(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, groups)
+}
+
+func (h *ProxyPoolHandler) GetGroupOptions(c *gin.Context) {
+	id, ok := parseProxyPoolID(c)
+	if !ok {
+		return
+	}
+	groups, err := h.service.ListPoolGroupOptions(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, groups)
+}
+
+func (h *ProxyPoolHandler) BindGroups(c *gin.Context) {
+	id, ok := parseProxyPoolID(c)
+	if !ok {
+		return
+	}
+	var req proxyPoolGroupIDsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	result, err := h.service.BindGroups(c.Request.Context(), id, req.GroupIDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *ProxyPoolHandler) UnbindGroups(c *gin.Context) {
+	id, ok := parseProxyPoolID(c)
+	if !ok {
+		return
+	}
+	var req proxyPoolGroupIDsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	result, err := h.service.UnbindGroups(c.Request.Context(), id, req.GroupIDs)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
 }
 
 func (h *ProxyPoolHandler) AssignProxies(c *gin.Context) {
@@ -230,12 +300,32 @@ func (h *ProxyPoolHandler) Rebind(c *gin.Context) {
 	if !ok {
 		return
 	}
-	rebound, err := h.service.RunPoolNow(c.Request.Context(), id)
+	started, err := h.service.RunPoolNow(c.Request.Context(), id)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
-	response.Success(c, gin.H{"rebound_accounts": rebound})
+	response.Success(c, gin.H{
+		"rebound_accounts": 0,
+		"started":          started,
+		"already_running":  !started,
+	})
+}
+
+// CheckSSOQuality starts a background Grok account-risk scan for every pool
+// account that has a stored SSO cookie. The route returns immediately; results
+// are surfaced through the account quality snapshots.
+func (h *ProxyPoolHandler) CheckSSOQuality(c *gin.Context) {
+	id, ok := parseProxyPoolID(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.StartSSOQualityCheck(c.Request.Context(), id)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, result)
 }
 
 func (h *ProxyPoolHandler) RebindLogs(c *gin.Context) {

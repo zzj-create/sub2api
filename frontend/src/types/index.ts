@@ -924,6 +924,10 @@ export interface Proxy {
   quality_grade?: string
   quality_summary?: string
   quality_checked?: number
+  grok_quality_status?: 'unknown' | 'pass' | 'warn' | 'fail' | 'challenge'
+  grok_quality_checked_at?: string | null
+  grok_quality_http_status?: number | null
+  grok_quality_message?: string | null
   expires_at: string | null
   fallback_mode: 'none' | 'proxy' | 'direct'
   backup_proxy_id?: number | null
@@ -940,6 +944,24 @@ export interface ProxyPool {
   health_interval_seconds: number
   failure_threshold: number
   auto_rebind: boolean
+  quality_mode: 'passive' | 'active' | 'hybrid'
+  active_interval_seconds: number
+  passive_window_seconds: number
+  quarantine_seconds: number
+  soft_tps: number
+  hard_tps: number
+  consecutive_soft: number
+  consecutive_errors: number
+  min_healthy_proxies: number
+  min_generation_ms: number
+  min_output_tokens: number
+  quality_model: string
+  disable_account_on_hard: boolean
+  thinking_guard: boolean
+  consecutive_missing_thinking: number
+  thinking_cross_verify: boolean
+  soft_cross_verify: boolean
+  max_output_tokens_probe: number
   created_at: string
   updated_at: string
 }
@@ -949,6 +971,27 @@ export interface ProxyPoolWithStats extends ProxyPool {
   healthy_proxy_count: number
   unhealthy_proxy_count: number
   bound_account_count: number
+  bound_group_count: number
+}
+
+export interface ProxyPoolGroup {
+  id: number
+  name: string
+  platform: string
+  status: string
+  account_count: number
+  bound_pool_id?: number | null
+  bound_pool_name?: string
+}
+
+export interface ProxyPoolGroupBindResult {
+  bound_groups: number
+  synced_accounts: number
+}
+
+export interface ProxyPoolGroupUnbindResult {
+  unbound_groups: number
+  detached_accounts: number
 }
 
 export interface ProxyPoolProxy extends Proxy {
@@ -956,6 +999,25 @@ export interface ProxyPoolProxy extends Proxy {
   pool_health: 'unknown' | 'healthy' | 'unhealthy'
   pool_checked_at?: string | null
   pool_failures: number
+  quality_class?: 'unknown' | 'healthy' | 'ignored' | 'soft' | 'hard' | 'error'
+  quality_strikes?: number
+  quality_thinking_strikes?: number
+  quality_error_strikes?: number
+  quarantined_until?: string | null
+  quality_output_tps?: number
+  quality_output_tokens?: number
+  quality_duration_ms?: number
+  quality_first_token_ms?: number
+  quality_last_source?: string
+  quality_last_reason?: string
+  quality_observed_at?: string | null
+  quality_probed_at?: string | null
+  quality_account_id?: number | null
+  quality_account_name?: string
+  grok_quality_status: 'unknown' | 'pass' | 'warn' | 'fail' | 'challenge'
+  grok_quality_checked_at?: string | null
+  grok_quality_http_status?: number | null
+  grok_quality_message?: string
   account_count: number
 }
 
@@ -973,6 +1035,7 @@ export interface ProxyPoolRebindLog {
 
 export interface ProxyPoolBindResult {
   assigned: number
+  pending?: number
   failed: number
   results: Array<{ account_id: number; proxy_id: number }>
 }
@@ -1158,6 +1221,33 @@ export interface OllamaCloudUsageSettings {
   debounce_minutes: number
 }
 
+export interface GrokAccountQualitySnapshot {
+  account_id: number
+  pool_id: number
+  pool_name?: string
+  proxy_id: number
+  proxy_name?: string
+  quality_class: 'healthy' | 'soft' | 'hard' | 'error' | 'ignored' | 'unknown' | string
+  output_tps: number
+  output_tokens: number
+  duration_ms: number
+  first_token_ms: number
+  has_thinking?: boolean | null
+  source: 'active' | 'passive' | string
+  reason?: string
+  error_kind?: string
+  http_status?: number | null
+  observed_at: string
+  sso_state?: 'clean' | 'flagged_account' | 'flagged_ip' | 'error' | 'unknown' | string
+  sso_reason?: string
+  sso_bot_flag_source?: number | null
+  sso_risk?: number | null
+  sso_policy?: string
+  sso_event?: string
+  sso_http_status?: number | null
+  sso_checked_at?: string | null
+}
+
 export interface Account {
   id: number
   name: string
@@ -1217,6 +1307,8 @@ export interface Account {
   created_at: string
   updated_at: string
   proxy?: Proxy
+  /** Latest Grok quality observation produced with this account. */
+  grok_quality?: GrokAccountQualitySnapshot | null
   group_ids?: number[] // Groups this account belongs to
   groups?: Group[] // Preloaded group objects
 

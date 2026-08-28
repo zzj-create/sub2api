@@ -57,12 +57,21 @@
             </button>
             <button
               @click="handleBatchQualityCheck"
-              :disabled="batchQualityChecking || loading"
+              :disabled="batchQualityChecking || filteringInvalidProxies || loading"
               class="btn btn-secondary"
               :title="t('admin.proxies.batchQualityCheck')"
             >
               <Icon name="shield" size="md" class="mr-2" :class="batchQualityChecking ? 'animate-pulse' : ''" />
               {{ t('admin.proxies.batchQualityCheck') }}
+            </button>
+            <button
+              @click="handleSelectInvalidProxies"
+              :disabled="filteringInvalidProxies || batchTesting || batchQualityChecking || loading"
+              class="btn btn-secondary"
+              :title="t('admin.proxies.filterInvalidHint')"
+            >
+              <Icon name="filter" size="md" class="mr-2" :class="filteringInvalidProxies ? 'animate-pulse' : ''" />
+              {{ filteringInvalidProxies ? t('admin.proxies.filteringInvalid') : t('admin.proxies.filterInvalidAction') }}
             </button>
             <button
               @click="openBatchDelete"
@@ -240,6 +249,17 @@
                 <span class="badge" :class="qualityOverallClass(row.quality_status)">
                   {{ qualityOverallLabel(row.quality_status) }}
                 </span>
+              </div>
+              <div
+                v-if="row.grok_quality_status"
+                class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400"
+                :title="row.grok_quality_message || undefined"
+              >
+                <span>Grok</span>
+                <span class="badge" :class="qualityStatusClass(row.grok_quality_status)">
+                  {{ qualityStatusLabel(row.grok_quality_status) }}
+                </span>
+                <span v-if="row.grok_quality_http_status">HTTP {{ row.grok_quality_http_status }}</span>
               </div>
             </div>
           </template>
@@ -988,6 +1008,7 @@ import { useTableSelection } from '@/composables/useTableSelection'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 import { formatDateTime } from '@/utils/format'
 import { proxyExpiryBadgeClass, proxyExpiryLabelKey } from '@/utils/proxyExpiry'
+import { hasPassedGrokQuality, isKnownInvalidProxy } from '@/utils/proxyHealth'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -1073,6 +1094,7 @@ const testingProxyIds = ref<Set<number>>(new Set())
 const qualityCheckingProxyIds = ref<Set<number>>(new Set())
 const batchTesting = ref(false)
 const batchQualityChecking = ref(false)
+const filteringInvalidProxies = ref(false)
 const proxyTableRef = ref<HTMLElement | null>(null)
 const {
   selectedSet: selectedProxyIds,
@@ -1083,6 +1105,7 @@ const {
   deselect,
   clear: clearSelectedProxies,
   removeMany: removeSelectedProxies,
+  setSelectedIds: setSelectedProxyIds,
   toggleVisible,
   batchUpdate
 } = useTableSelection<Proxy>({
@@ -1531,6 +1554,11 @@ const applyQualityResult = (proxyId: number, result: ProxyQualityCheckResult) =>
   target.quality_grade = result.grade
   target.quality_summary = result.summary
   target.quality_checked = result.checked_at
+  const grokResult = result.items.find((item) => item.target === 'grok')
+  target.grok_quality_status = grokResult?.status
+  target.grok_quality_checked_at = new Date(result.checked_at * 1000).toISOString()
+  target.grok_quality_http_status = grokResult?.http_status
+  target.grok_quality_message = grokResult?.message
 }
 
 const formatLocation = (proxy: Proxy) => {
@@ -1628,7 +1656,7 @@ const handleQualityCheck = async (proxy: Proxy) => {
 }
 
 const runBatchProxyQualityChecks = async (ids: number[]) => {
-  if (ids.length === 0) return { total: 0, healthy: 0, warn: 0, challenge: 0, failed: 0 }
+  if (ids.length === 0) return { total: 0, healthy: 0, warn: 0, challenge: 0, failed: 0, invalidIds: [] as number[] }
 
   const concurrency = 3
   let index = 0
@@ -1636,6 +1664,7 @@ const runBatchProxyQualityChecks = async (ids: number[]) => {
   let warn = 0
   let challenge = 0
   let failed = 0
+  const invalidIds = new Set<number>()
 
   const worker = async () => {
     while (index < ids.length) {
@@ -1659,6 +1688,9 @@ const runBatchProxyQualityChecks = async (ids: number[]) => {
           }
         }
         applyQualityResult(current, result)
+        if (!hasPassedGrokQuality(result)) {
+          invalidIds.add(current)
+        }
         if (result.challenge_count > 0) {
           challenge++
         } else if (result.failed_count > 0) {
@@ -1670,6 +1702,7 @@ const runBatchProxyQualityChecks = async (ids: number[]) => {
         }
       } catch {
         failed++
+        invalidIds.add(current)
       } finally {
         stopQualityCheckingProxy(current)
       }
@@ -1683,7 +1716,8 @@ const runBatchProxyQualityChecks = async (ids: number[]) => {
     healthy,
     warn,
     challenge,
-    failed
+    failed,
+    invalidIds: ids.filter((id) => invalidIds.has(id))
   }
 }
 
@@ -1882,13 +1916,15 @@ const handleBatchQualityCheck = async () => {
     }
 
     const summary = await runBatchProxyQualityChecks(ids)
+    setSelectedProxyIds(summary.invalidIds)
     appStore.showSuccess(
       t('admin.proxies.batchQualityDone', {
         count: summary.total,
         healthy: summary.healthy,
         warn: summary.warn,
         challenge: summary.challenge,
-        failed: summary.failed
+        failed: summary.failed,
+        invalid: summary.invalidIds.length
       })
     )
     loadProxies()
@@ -1897,6 +1933,28 @@ const handleBatchQualityCheck = async () => {
     console.error('Error batch checking quality:', error)
   } finally {
     batchQualityChecking.value = false
+  }
+}
+
+const handleSelectInvalidProxies = async () => {
+  if (filteringInvalidProxies.value) return
+
+  filteringInvalidProxies.value = true
+  try {
+    const allProxies = await fetchAllProxiesForBatch()
+    const invalidIds = allProxies.filter(isKnownInvalidProxy).map((proxy) => proxy.id)
+    setSelectedProxyIds(invalidIds)
+
+    if (invalidIds.length === 0) {
+      appStore.showInfo(t('admin.proxies.filterInvalidEmpty'))
+      return
+    }
+    appStore.showSuccess(t('admin.proxies.filterInvalidDone', { count: invalidIds.length }))
+  } catch (error: any) {
+    appStore.showError(error.response?.data?.detail || t('admin.proxies.filterInvalidFailed'))
+    console.error('Error filtering invalid proxies:', error)
+  } finally {
+    filteringInvalidProxies.value = false
   }
 }
 

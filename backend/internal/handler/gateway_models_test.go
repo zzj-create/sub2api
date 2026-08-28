@@ -363,37 +363,7 @@ func TestGatewayModels_GeminiGroupFallsBackToGeminiModels(t *testing.T) {
 	require.NotContains(t, modelIDsForTest(got.Data), "claude-sonnet-4-6")
 }
 
-func TestGatewayModels_Grok45AdvertisesReasoningEffortForGrokBuild(t *testing.T) {
-	assertGrokGatewayReasoningEfforts(t, 4409, "grok-4.5", []gatewayReasoningEffortOptionForTest{
-		{Value: "low", Label: "Low"},
-		{Value: "medium", Label: "Medium"},
-		{Value: "high", Label: "High", Default: true},
-	})
-}
-
-func TestGatewayModels_Grok46AdvertisesXHighReasoningEffortForGrokBuild(t *testing.T) {
-	xhighEfforts := []gatewayReasoningEffortOptionForTest{
-		{Value: "low", Label: "Low"},
-		{Value: "medium", Label: "Medium"},
-		{Value: "high", Label: "High", Default: true},
-		{Value: "xhigh", Label: "xHigh"},
-	}
-	tests := []struct {
-		groupID int64
-		model   string
-	}{
-		{groupID: 4410, model: "grok-4.6"},
-		{groupID: 4411, model: "grok-4.6-latest"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.model, func(t *testing.T) {
-			assertGrokGatewayReasoningEfforts(t, tt.groupID, tt.model, xhighEfforts)
-		})
-	}
-}
-
-func assertGrokGatewayReasoningEfforts(t *testing.T, groupID int64, modelID string, want []gatewayReasoningEffortOptionForTest) {
-	t.Helper()
+func TestGatewayModels_Grok46AdvertisesReasoningEffort(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	h := newGatewayModelsHandlerForTest(
@@ -404,7 +374,7 @@ func assertGrokGatewayReasoningEfforts(t *testing.T, groupID int64, modelID stri
 						ID:       1,
 						Platform: service.PlatformGrok,
 						Credentials: map[string]any{
-							"model_mapping": map[string]any{modelID: modelID},
+							"model_mapping": map[string]any{"grok-4.6": "grok-4.6"},
 						},
 					},
 				},
@@ -426,7 +396,7 @@ func assertGrokGatewayReasoningEfforts(t *testing.T, groupID int64, modelID stri
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 	require.Len(t, got.Data, 1)
 	model := got.Data[0]
-	require.Equal(t, modelID, model.ID)
+	require.Equal(t, "grok-4.6", model.ID)
 	require.True(t, model.SupportsReasoningEffort)
 	require.Equal(t, "high", model.ReasoningEffort)
 	require.Equal(t, want, model.ReasoningEfforts)
@@ -744,6 +714,7 @@ func TestGatewayModels_CompositeUnmappedAccountsFallbackToLinkedPlatformsOnly(t 
 
 	ids := modelIDsForTest(got.Data)
 	require.Contains(t, ids, "gpt-5.5")
+	require.Contains(t, ids, "grok-4.6")
 	require.Contains(t, ids, "grok-4.3")
 	require.NotContains(t, ids, "claude-sonnet-4-6")
 	require.NotContains(t, ids, "gemini-2.5-flash")

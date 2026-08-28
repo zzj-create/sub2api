@@ -29,6 +29,7 @@ import (
 type openaiStreamingResult struct {
 	usage            *OpenAIUsage
 	firstTokenMs     *int
+	hasThinking      bool
 	responseID       string
 	imageCount       int
 	imageOutputSizes []string
@@ -38,6 +39,7 @@ type openaiStreamingResult struct {
 type openaiNonStreamingResult struct {
 	*OpenAIUsage
 	usage            *OpenAIUsage
+	hasThinking      bool
 	responseID       string
 	imageCount       int
 	imageOutputSizes []string
@@ -157,6 +159,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 	}
 
 	usage := &OpenAIUsage{}
+	hasThinking := false
 	imageCounter := newOpenAIImageOutputCounter()
 	responseID := ""
 	var firstOutputScanGuard atomic.Bool
@@ -348,6 +351,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		return &openaiStreamingResult{
 			usage:            usage,
 			firstTokenMs:     firstTokenMs,
+			hasThinking:      hasThinking,
 			responseID:       responseID,
 			imageCount:       imageCounter.Count(),
 			imageOutputSizes: imageCounter.Sizes(),
@@ -479,6 +483,9 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 		// Extract data from SSE line (supports both "data: " and "data:" formats)
 		if data, ok := extractOpenAISSEDataLine(line); ok {
 			dataBytes := []byte(data)
+			if openAIResponsePayloadHasThinking(dataBytes) {
+				hasThinking = true
+			}
 			eventType := effectiveOpenAISSEEventType(dataBytes, pendingSSEEventType)
 			if codexFailureTerminal && sawBareError && !sawResponseFailed &&
 				(eventType == "response.completed" || eventType == "response.done") {
@@ -1645,6 +1652,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 	return &openaiNonStreamingResult{
 		OpenAIUsage:      usage,
 		usage:            usage,
+		hasThinking:      openAIResponsePayloadHasThinking(body),
 		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
 		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
 		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
@@ -1752,6 +1760,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 	return &openaiNonStreamingResult{
 		OpenAIUsage:      usage,
 		usage:            usage,
+		hasThinking:      openAIResponseBodyHasThinking(bodyText),
 		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
 		imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
 		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
@@ -2340,6 +2349,19 @@ func (s *OpenAIGatewayService) parseSSEUsageFromBody(body string) *OpenAIUsage {
 		s.parseSSEUsageBytesWithType(data, eventType, usage)
 	})
 	return usage
+}
+
+func openAIResponseBodyHasThinking(body string) bool {
+	hasThinking := false
+	forEachOpenAISSEDataPayload(body, func(data []byte) {
+		if !hasThinking && openAIResponsePayloadHasThinking(data) {
+			hasThinking = true
+		}
+	})
+	if hasThinking {
+		return true
+	}
+	return openAIResponsePayloadHasThinking([]byte(body))
 }
 
 func (s *OpenAIGatewayService) replaceModelInSSEBody(body, fromModel, toModel string) string {

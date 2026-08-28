@@ -9,16 +9,39 @@ import (
 )
 
 func TestProxyPoolProxyFromServiceUsesAPIFieldsAndHidesPassword(t *testing.T) {
+	accountID := int64(42)
 	mapped := ProxyPoolProxyFromService(&service.ProxyPoolProxy{
-		Proxy:      service.Proxy{ID: 7, Name: "pool member", Password: "secret"},
-		PoolID:     2,
-		PoolHealth: service.ProxyPoolHealthHealthy,
+		Proxy:              service.Proxy{ID: 7, Name: "pool member", Password: "secret"},
+		PoolID:             2,
+		PoolHealth:         service.ProxyPoolHealthHealthy,
+		QualityAccountID:   &accountID,
+		QualityAccountName: "probe-account@example.com",
+		GrokQualityStatus:  "pass",
 	})
 	payload, err := json.Marshal(mapped)
 	require.NoError(t, err)
 	require.Contains(t, string(payload), `"id":7`)
 	require.Contains(t, string(payload), `"pool_id":2`)
 	require.Contains(t, string(payload), `"pool_health":"healthy"`)
+	require.Contains(t, string(payload), `"grok_quality_status":"pass"`)
+	require.Contains(t, string(payload), `"quality_account_id":42`)
+	require.Contains(t, string(payload), `"quality_account_name":"probe-account@example.com"`)
 	require.NotContains(t, string(payload), "secret")
 	require.NotContains(t, string(payload), "Password")
+}
+
+func TestProxyWithAccountCountFromServiceAdminIncludesGrokQuality(t *testing.T) {
+	httpStatus := 401
+	mapped := ProxyWithAccountCountFromServiceAdmin(&service.ProxyWithAccountCount{
+		Proxy:                 service.Proxy{ID: 8, Name: "global proxy", Password: "secret"},
+		GrokQualityStatus:     "pass",
+		GrokQualityHTTPStatus: &httpStatus,
+		GrokQualityMessage:    "target reachable",
+	})
+
+	payload, err := json.Marshal(mapped)
+	require.NoError(t, err)
+	require.Contains(t, string(payload), `"grok_quality_status":"pass"`)
+	require.Contains(t, string(payload), `"grok_quality_http_status":401`)
+	require.Contains(t, string(payload), `"grok_quality_message":"target reachable"`)
 }

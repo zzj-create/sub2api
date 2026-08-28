@@ -488,8 +488,17 @@ func (s *OpenAIGatewayService) recordOpenAIOAuth429() {
 	s.openaiOAuth429WindowCount.Add(1)
 }
 
-func (s *OpenAIGatewayService) ShouldStopOpenAIOAuth429Failover(account *Account, statusCode int, failedSwitches int, state *OpenAIOAuth429FailoverState) bool {
+func (s *OpenAIGatewayService) ShouldStopOpenAIOAuth429Failover(account *Account, statusCode int, failedSwitches int, state *OpenAIOAuth429FailoverState, responseBodies ...[]byte) bool {
 	if failedSwitches < openAIOAuth429StormMaxAccountSwitches {
+		return false
+	}
+	var responseBody []byte
+	if len(responseBodies) > 0 {
+		responseBody = responseBodies[0]
+	}
+	if isGrokOAuthAccount(account) && isGrokFreeUsageExhausted(statusCode, responseBody) {
+		// Confirmed Free quota exhaustion is account-scoped. Let the caller's
+		// bounded exclusion loop continue to the next account.
 		return false
 	}
 	if state != nil && state.grokOAuth429FollowupPending {

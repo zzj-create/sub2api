@@ -494,7 +494,6 @@ export default {
         disableScheduling: 'Disable Scheduling',
         resetStatus: 'Reset Status',
         refreshToken: 'Refresh Token',
-        bindProxyPool: 'Bind Proxy Pool',
         probeUpstreamBilling: 'Probe Upstream Rate',
         bindProxyPool: 'Bind Proxy Pool',
         selectBeforeBind: 'Select the accounts to bind first',

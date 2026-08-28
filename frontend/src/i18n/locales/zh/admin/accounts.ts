@@ -581,7 +581,6 @@ export default {
         disableScheduling: '批量停止调度',
         resetStatus: '批量重置状态',
         refreshToken: '批量刷新令牌',
-        bindProxyPool: '绑定代理池',
         probeUpstreamBilling: '探测上游倍率',
         bindProxyPool: '绑定代理池',
         selectBeforeBind: '请先选择要绑定的账号',

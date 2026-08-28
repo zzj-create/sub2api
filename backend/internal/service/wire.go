@@ -937,7 +937,6 @@ var ProviderSet = wire.NewSet(
 	ProvideProxyPoolService,
 	ProvideOpenAICodexVersionSyncService,
 	ProvideProxyExpiryService,
-	ProvideProxyPoolService,
 	ProvideSubscriptionExpiryService,
 	ProvideTimingWheelService,
 	ProvideDashboardAggregationService,

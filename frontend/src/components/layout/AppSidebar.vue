@@ -473,6 +473,10 @@ const ServerIcon = {
     )
 }
 
+const PluginIcon = {
+  render: () => h(Icon, { name: 'cube' })
+}
+
 const ProxyPoolIcon = {
   render: () => h(Icon, { name: 'database', size: 'md' })
 }

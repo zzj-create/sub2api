@@ -185,7 +185,6 @@
           @refresh-token="handleBulkRefreshToken"
           @bind-proxy-pool="showBindProxyPool = true"
           @probe-upstream-billing="handleBulkProbeUpstreamBilling"
-          @bind-proxy-pool="showBindProxyPool = true"
           @edit-selected="openBulkEditSelected"
           @edit-filtered="openBulkEditFiltered"
           @clear="clearSelection"
@@ -605,7 +604,6 @@ const includeProxyOnExport = ref(true)
 const showBulkEdit = ref(false)
 const showBindProxyPool = ref(false)
 const bulkEditTarget = ref<AccountBulkEditTarget | null>(null)
-const showBindProxyPool = ref(false)
 const showTempUnsched = ref(false)
 const showDeleteDialog = ref(false)
 const showCreateShadowDialog = ref(false)

@@ -33,6 +33,15 @@ func grokOAuthHasExplicitPaidQuota(account *Account) bool {
 		return false
 	}
 
+	// The provider JWT is authoritative and can arrive before the scheduler
+	// snapshot has been rebuilt with a persisted subscription_tier credential.
+	// This mirrors CanonicalGrokPlan: SuperGrokPro is ambiguous, but numeric
+	// tier 5 resolves directly to SuperGrok Heavy.
+	if jwtTier := xai.SubscriptionTierFromJWT(account.GetCredential("access_token")); jwtTier != "" &&
+		!isGrokFreeSubscriptionTier(jwtTier) && !isGrokUnknownSubscriptionTier(jwtTier) {
+		return true
+	}
+
 	if billing, err := grokBillingSnapshotFromExtra(account.Extra); err == nil && billing != nil {
 		if tier := strings.TrimSpace(billing.Plan); tier != "" &&
 			!isGrokFreeSubscriptionTier(tier) && !isGrokUnknownSubscriptionTier(tier) {
@@ -47,6 +56,13 @@ func grokOAuthHasExplicitPaidQuota(account *Account) bool {
 	if snapshot, err := grokQuotaSnapshotFromExtra(account.Extra); err == nil && snapshot != nil {
 		if tier := strings.TrimSpace(snapshot.SubscriptionTier); tier != "" &&
 			!isGrokFreeSubscriptionTier(tier) && !isGrokUnknownSubscriptionTier(tier) {
+			return true
+		}
+		// xAI does not return a subscription-tier header on every Heavy response.
+		// A fresh 8300-request / 53M-token grok-4.5 Responses window is itself
+		// explicit paid evidence and must not fall back to the Free 500k gate.
+		if plan := xai.Grok45ResponsesPlanHint(snapshot, time.Now()); plan != "" &&
+			!isGrokFreeSubscriptionTier(plan) && !isGrokUnknownSubscriptionTier(plan) {
 			return true
 		}
 	}

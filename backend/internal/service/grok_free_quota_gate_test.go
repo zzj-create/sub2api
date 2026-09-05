@@ -4,6 +4,8 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -97,8 +99,20 @@ func grokFreeQuotaTestConfig() *config.Config {
 	return cfg
 }
 
+func grokSubscriptionTierJWTForTest(t *testing.T, tier any) string {
+	t.Helper()
+	header, err := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT"})
+	require.NoError(t, err)
+	payload, err := json.Marshal(map[string]any{"tier": tier})
+	require.NoError(t, err)
+	encode := base64.RawURLEncoding.EncodeToString
+	return encode(header) + "." + encode(payload) + ".test-signature"
+}
+
 func TestGrokOAuthUsesFreeRollingQuotaDefaultsUnknownToFree(t *testing.T) {
 	monthlyLimit := 10.0
+	heavyRequestLimit := int64(8300)
+	observedAt := time.Now().UTC().Format(time.RFC3339)
 	tests := []struct {
 		name    string
 		account *Account
@@ -112,6 +126,14 @@ func TestGrokOAuthUsesFreeRollingQuotaDefaultsUnknownToFree(t *testing.T) {
 		{name: "paid tier", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{"subscription_tier": "supergrok"}}},
 		{name: "paid plan type", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{"plan_type": "pro"}}},
 		{name: "paid billing", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokBillingExtraKey: &xai.BillingSummary{MonthlyLimitCents: &monthlyLimit}}}},
+		{name: "heavy jwt tier", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Credentials: map[string]any{"access_token": grokSubscriptionTierJWTForTest(t, 5)}}},
+		{name: "heavy grok-4.5 window", account: &Account{Platform: PlatformGrok, Type: AccountTypeOAuth, Extra: map[string]any{grokQuotaSnapshotExtraKey: &xai.QuotaSnapshot{
+			Model:               "grok-4.5",
+			Requests:            &xai.QuotaWindow{Limit: &heavyRequestLimit},
+			UpdatedAt:           observedAt,
+			LastHeadersSeenAt:   observedAt,
+			PlanFrom45Responses: "supergrok_heavy",
+		}}}},
 	}
 
 	for _, tt := range tests {

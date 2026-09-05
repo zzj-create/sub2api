@@ -33,6 +33,7 @@ type grokFreeQuotaAccountRepoStub struct {
 
 	mu                   sync.Mutex
 	accounts             []Account
+	accountsByID         map[int64]*Account
 	activeByID           map[int64]bool
 	activationCalls      int
 	rateLimitedCalls     int
@@ -42,6 +43,16 @@ type grokFreeQuotaAccountRepoStub struct {
 
 func (r *grokFreeQuotaAccountRepoStub) ListSchedulableByPlatform(context.Context, string) ([]Account, error) {
 	return append([]Account(nil), r.accounts...), nil
+}
+
+func (r *grokFreeQuotaAccountRepoStub) GetByID(_ context.Context, id int64) (*Account, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if account := r.accountsByID[id]; account != nil {
+		copyAccount := *account
+		return &copyAccount, nil
+	}
+	return nil, errors.New("account not found")
 }
 
 func (r *grokFreeQuotaAccountRepoStub) SetRateLimited(_ context.Context, id int64, resetAt time.Time) error {
@@ -171,6 +182,30 @@ func TestFilterGrokFreeQuotaAccountsUsesSynchronousHardLimit(t *testing.T) {
 	require.WithinDuration(t, time.Now().UTC().Add(-24*time.Hour), repo.start, time.Second)
 	require.Equal(t, 2, accountRepo.rateLimitedCalls, "each exhausted account gets one durable rate-limit generation")
 	require.WithinDuration(t, time.Now().Add(grokFreeLocalUsageCooldown), accountRepo.lastRateLimitResetAt, time.Second)
+}
+
+func TestFilterGrokFreeQuotaAccountsRechecksDurableHeavyTier(t *testing.T) {
+	usageRepo := &grokFreeQuotaUsageRepoStub{stats: map[int64]*usagestats.AccountStats{
+		31: {Tokens: xai.GrokFreeRolling24hTokenLimit + 1},
+	}}
+	durable := &Account{
+		ID:          31,
+		Platform:    PlatformGrok,
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"subscription_tier": "supergrok_heavy"},
+	}
+	accountRepo := &grokFreeQuotaAccountRepoStub{accountsByID: map[int64]*Account{31: durable}}
+	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{
+		cfg: grokFreeQuotaTestConfig(), accountRepo: accountRepo, usageLogRepo: usageRepo,
+	}}
+	staleSnapshot := Account{ID: 31, Platform: PlatformGrok, Type: AccountTypeOAuth}
+
+	filtered := scheduler.filterGrokFreeQuotaAccounts(context.Background(), []Account{staleSnapshot})
+
+	require.Equal(t, []int64{31}, accountIDs(filtered))
+	require.Equal(t, 1, usageRepo.calls)
+	require.Equal(t, []int64{31}, usageRepo.lastIDs)
+	require.Zero(t, accountRepo.rateLimitedCalls)
 }
 
 func TestFilterGrokFreeQuotaAccountsDoesNotExtendActiveCooldown(t *testing.T) {

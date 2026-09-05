@@ -47,6 +47,14 @@ func filterGrokFreeQuotaAccountsCore(
 		account := &accounts[i]
 		exhausted, tokens, known := grokFreeRollingQuotaExhausted(usageCtx, usageLogRepo, account, now)
 		if known && exhausted {
+			// Scheduler snapshots can lag a provider-tier transition or credential
+			// refresh. Before durably rate-limiting an apparently-Free account,
+			// re-read that one account and honor authoritative paid evidence from
+			// the database (JWT tier, billing, credentials, or a Heavy 4.5 window).
+			if durableGrokAccountExemptFromFreeRollingQuota(ctx, accountRepo, account.ID) {
+				filtered = append(filtered, *account)
+				continue
+			}
 			persistGrokFreeLocalUsageRateLimit(ctx, accountRepo, account, now, true, true)
 			grokFreeQuotaGateBlockedTotal.Add(1)
 			slog.Info("grok_free_quota_hard_gate_blocked",
@@ -62,4 +70,15 @@ func filterGrokFreeQuotaAccountsCore(
 		filtered = append(filtered, *account)
 	}
 	return filtered
+}
+
+func durableGrokAccountExemptFromFreeRollingQuota(ctx context.Context, repo AccountRepository, accountID int64) bool {
+	if repo == nil || accountID <= 0 {
+		return false
+	}
+	durable, err := repo.GetByID(ctx, accountID)
+	if err != nil || durable == nil || !durable.IsGrokOAuth() {
+		return false
+	}
+	return !grokOAuthUsesFreeRollingQuota(durable)
 }
